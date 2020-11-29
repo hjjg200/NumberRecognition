@@ -19,11 +19,16 @@ class MLP(metaclass = abc.ABCMeta):
     EXT_BIASES = ".biases.npy"
     EXT_WEIGHTS = ".weights.npy"
 
-    def __init__(self, sizes):
-        self.sizes = sizes
-        self.biases = np.asarray([np.random.randn(n, 1) for n in sizes[1:]])
-        self.weights = np.asarray([np.random.randn(j, i) \
-            for i, j in zip(sizes[:-1], sizes[1:])])
+    def __init__(self, sizes=None, weights=None, biases=None):
+        if sizes is not None:
+            self.sizes = sizes
+            self.biases = np.asarray([np.random.randn(n, 1) \
+                for n in sizes[1:]])
+            self.weights = np.asarray([np.random.randn(j, i) \
+                for i, j in zip(sizes[:-1], sizes[1:])])
+        elif weights is not None and biases is not None:
+            self.weights = weights
+            self.biases = biases
 
     def feedforward(self, a):
         for b, w in zip(self.biases, self.weights):
@@ -38,12 +43,12 @@ class MLP(metaclass = abc.ABCMeta):
                 for j in range(0, len(data), batch_size)]
             for batch in batches:
                 self.__run(batch, lr)
-            if test_data:
-                self.score = self.test(test_data)
+            if test_data is not None:
+                self.test(test_data)
                 print("Epoch {0} tested: {1}/{2}".format( \
                     i, self.score, len(test_data)))
             else:
-                print("Epoch {0} done")
+                print("Epoch {0} done".format(i))
 
     def __run(self, batch, lr):
         grad_c_b = np.asarray([np.zeros(b.shape) for b in self.biases])
@@ -73,13 +78,15 @@ class MLP(metaclass = abc.ABCMeta):
         self.biases -= (lr / len(batch)) * grad_c_b
         self.weights -= (lr / len(batch)) * grad_c_w
 
-    def c_prime(self, a, y):
-        return a - y
-
     def test(self, data):
         results = [(np.argmax(self.feedforward(i)), y) \
             for i, y in data]
-        return sum(int(i == y) for (i, y) in results)
+        self.score = sum(int(i == y) for (i, y) in results)
+        return self.score
+
+    @abc.abstractmethod
+    def c_prime(self, a, y):
+        pass
 
     @abc.abstractmethod
     def f(self, z):
@@ -91,50 +98,72 @@ class MLP(metaclass = abc.ABCMeta):
 
     def save(self):
         name = "{0}_{1}".format(fake.first_name(), self.score)
-        np.save(RECORDS / (name + MLP.EXT_BIASES), \
+        np.save(RECORDS_DIR / (name + MLP.EXT_BIASES), \
             self.biases, allow_pickle=True)
-        np.save(RECORDS / (name + MLP.EXT_WEIGHTS), \
+        np.save(RECORDS_DIR / (name + MLP.EXT_WEIGHTS), \
             self.weights, allow_pickle=True)
         print("Saved data to {0}.*.npy".format(name))
 
     def load(self, name):
-        self.biases = np.load(RECORDS / (name + MLP.EXT_BIASES), \
+        self.biases = np.load(RECORDS_DIR / (name + MLP.EXT_BIASES), \
             allow_pickle=True)
-        self.weights = np.load(RECORDS / (name + MLP.EXT_WEIGHTS), \
+        self.weights = np.load(RECORDS_DIR / (name + MLP.EXT_WEIGHTS), \
             allow_pickle=True)
         print("Loaded data from {0}.*.npy".format(name))
 
-    # def reproduce(self, other, count):
-        """ Return array of MLP of offsprings """
+    def evolve(self, other, epochs, offsprings_size, test_data):
+        if offsprings_size < 2:
+            raise Exception("Offsprings size must be above 1")
+        a0, a1 = (self, other)
+        for i in range(epochs):
+            offsprings = a0.reproduce(a1, offsprings_size)
+            for offspring in offsprings:
+                offspring.test(test_data)
+            offsprings.sort(key=lambda each: each.score, reverse=True)
+            a0, a1 = offsprings[:2]
+            print("Epoch {0} done:".format(i))
+            print("- 1st score: {0}".format(a0.score))
+            print("- 2nd score: {0}".format(a1.score))
+        return (a0, a1)
 
-    # def __mutate(self, factor):
-        """ Mutate its weights and biases """
+    def reproduce(self, other, count):
+        """ Returns array of MLP of offsprings """
+        b0, b1 = (self.biases, other.biases)
+        w0, w1 = (self.weights, other.weights)
+        offsprings = [SigmoidMLP( \
+            biases=(b0 + (b1 - b0) * 2.0 * np.random.standard_normal(size=b0.shape)), \
+            weights=(w0 + (w1 - w0) * 2.0 * np.random.standard_normal(size=w0.shape))) \
+            for _ in range(count)]
+        for offspring in offsprings:
+            offspring.__mutate()
+        return offsprings
+
+    def __mutate(self):
+        """ Mutates its weights and biases """
+        pass
 
 class SigmoidMLP(MLP):
     def f(self, z):
         return 1.0 / (1.0 + np.exp(-z))
-
     def f_prime(self, z):
         return self.f(z) * (1.0 - self.f(z))
+    def c_prime(self, a, y):
+        return a - y
 
+"""
 class ReLUMLP(MLP):
     def f(self, z):
         return np.maximum(z, 0)
-
     def f_prime(self, z):
         r = np.copy(z)
         r[r <= 0] = 0
         r[r > 0] = 1
         return r
+    def c_prime(self, a, y):
+        pass
+"""
 
-data = validation_data = test_data = None
-
-def load_data(fn):
-    global data, validation_data, test_data
-    data, validation_data, test_data = \
-        load_data_wrapper(fn)
-
-if __name__ == "__main__":
+if __name__ == "__main__" and False:
     # Check for args
     mlp = SigmoidMLP([784,30,10])
     if(len(sys.argv) > 1):
