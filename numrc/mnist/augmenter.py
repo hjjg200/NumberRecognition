@@ -14,11 +14,14 @@ class Augmenter(object):
         delta = np.random.standard_normal(self.shape) * deg
         return np.minimum(1.0, np.maximum(0.0, copy + delta))
 
+    def invert(self, val):
+        return 1.0 - np.array(val)
+
     def rotate(self, val, rad):
         " rad to clockwise "
         rad = 2 * math.pi - rad
         copy = self.reshape(val)
-        projection = np.zeros(self.shape)
+        projection = np.zeros(self.shape) - 1.0
         hw = self.shape[1] / 2.0
         hh = self.shape[0] / 2.0
         for y, row in enumerate(copy):
