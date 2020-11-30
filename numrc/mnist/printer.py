@@ -13,10 +13,10 @@ class Printer(object):
     def float_to_char(fl):
         return Printer.GRAYSCALE[int(fl * (len(Printer.GRAYSCALE) - 1))]
 
-    def print(self, val):
+    def print(self, val, widen=1):
         copy = np.array(val).reshape(self.shape)
         for row in copy:
             buf = ""
             for col in row:
-                buf += Printer.float_to_char(col)
+                buf += Printer.float_to_char(col) * widen
             print(buf)
