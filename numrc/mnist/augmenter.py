@@ -1,0 +1,3 @@
+
+class Augmenter(object):
+    pass

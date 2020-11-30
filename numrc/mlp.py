@@ -10,7 +10,7 @@ from faker import Faker
 Faker.seed(time.time())
 fake = Faker()
 
-PROJECT_DIR = Path(__file__).parent if __file__ else Path.cwd()
+PROJECT_DIR = Path(__file__).parents[1] if __file__ else Path.cwd()
 RECORDS_DIR = PROJECT_DIR / "records"
 RECORDS_DIR.mkdir(exist_ok=True)
 
