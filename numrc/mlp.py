@@ -3,6 +3,8 @@ import abc
 import time
 import random
 from pathlib import Path
+import tarfile as tf
+from io import BytesIO
 
 from .constants import IMG_SIZE
 
@@ -12,15 +14,16 @@ class MLP(metaclass = abc.ABCMeta):
         if rand == False:
             return
         sizes = (in_size, *hl_sizes, out_size)
-        self.sizes = sizes
+        self.sizes = np.asarray(sizes)
         self.weights = np.asarray([np.random.randn(j, i) \
             for i, j in zip(sizes[:-1], sizes[1:])])
         self.biases = np.asarray([np.random.randn(n, 1) \
             for n in sizes[1:]])
 
     @classmethod
-    def from_data(cls, weights, biases):
+    def from_data(cls, sizes, weights, biases):
         self = cls(rand=False)
+        self.sizes = sizes
         self.weights = weights
         self.biases = biases
         return self
@@ -50,9 +53,9 @@ class MLP(metaclass = abc.ABCMeta):
         grad_c_w = np.asarray([np.zeros(w.shape) for w in self.weights])
         grad_c_b = np.asarray([np.zeros(b.shape) for b in self.biases])
         for entry in batch:
-            a, label = entry.image, entry.label
-            y = np.zeros((10, 1))
-            y[label] = 1.0
+            a = entry.image
+            y = np.zeros((self.sizes[-1], 1))
+            y[entry.label] = 1.0
             as_ = [a]
             zs = []
             for w, b in zip(self.weights, self.biases):
@@ -90,20 +93,67 @@ class MLP(metaclass = abc.ABCMeta):
     def f_prime(self, z):
         pass
 
-    def save(self):
-        name = "{0}_{1}".format(fake.first_name(), self.score)
-        np.save(RECORDS_DIR / (name + MLP.EXT_BIASES), \
-            self.biases, allow_pickle=True)
-        np.save(RECORDS_DIR / (name + MLP.EXT_WEIGHTS), \
-            self.weights, allow_pickle=True)
-        print("Saved data to {0}.*.npy".format(name))
+    FNAME_SHAPES = "shapes.npy"
+    FNAME_SIZES = "sizes.npy"
+    FNAME_WEIGHTS = "weights{0}.npy"
+    FNAME_BIASES = "biases{0}.npy"
 
-    def load(self, name):
-        self.biases = np.load(RECORDS_DIR / (name + MLP.EXT_BIASES), \
-            allow_pickle=True)
-        self.weights = np.load(RECORDS_DIR / (name + MLP.EXT_WEIGHTS), \
-            allow_pickle=True)
-        print("Loaded data from {0}.*.npy".format(name))
+    def save(self, path):
+        path = Path(path)
+        tar = tf.open(path, 'x:gz', format=tf.PAX_FORMAT)
+
+        def put(name, arr, dtype=np.float64):
+            nonlocal tar
+            ti = tf.TarInfo(name)
+            buf = np.array(arr, dtype).tobytes()
+            ti.size = len(buf)
+            tar.addfile(ti, BytesIO(buf))
+
+        put(MLP.FNAME_SIZES, self.sizes)
+        shapes = []
+
+        for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+            s_w, s_b = w.shape, b.shape
+            shapes += [len(s_w), *s_w, len(s_b), *s_b]
+            put(MLP.FNAME_WEIGHTS.format(i), w)
+            put(MLP.FNAME_BIASES.format(i), b)
+
+        put(MLP.FNAME_SHAPES, np.asarray(shapes), np.int32)
+
+        tar.close()
+
+    @classmethod
+    def load(cls, path):
+        path = Path(path)
+        tar = tf.open(path, 'r:gz')
+
+        def get(name, dtype=np.float64):
+            nonlocal tar
+            ti = tar.getmember(name)
+            rd = tar.extractfile(ti)
+            return np.frombuffer(rd.read(ti.size), dtype)
+
+        sizes = get(cls.FNAME_SIZES)
+        shapes = get(cls.FNAME_SHAPES, np.int32)
+        print(shapes)
+        def next_shape():
+            nonlocal shapes
+            l = shapes[0]
+            shape = shapes[1:1+l]
+            shapes = shapes[1+l:]
+            return shape
+
+        weights, biases = [], []
+        for i in range(len(sizes) - 1):
+            weights.append(get(cls.FNAME_WEIGHTS.format(i)) \
+                .reshape(next_shape()))
+            biases.append(get(cls.FNAME_BIASES.format(i)) \
+                .reshape(next_shape()))
+
+        weights = np.asarray(weights)
+        biases = np.asarray(biases)
+
+        return cls.from_data(sizes, weights, biases)
 
     def evolve(self, other, epochs, offsprings_size, test_data):
         if offsprings_size < 2:
