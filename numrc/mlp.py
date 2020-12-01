@@ -7,6 +7,7 @@ import tarfile as tf
 from io import BytesIO
 
 from .constants import IMG_SIZE
+from .mnist import Database
 
 class MLP(metaclass = abc.ABCMeta):
 
@@ -76,10 +77,13 @@ class MLP(metaclass = abc.ABCMeta):
         self.biases -= (lr / len(batch)) * grad_c_b
 
     def test(self, tdb):
-        success = sum(int(self.recognize(entry) == entry.label) \
-            for entry in tdb) * 1.0
-        self.score = round(success / len(tdb) * 100.0, 2)
-        return self.score
+        failed = []
+        for entry in tdb:
+            if self.recognize(entry) != entry.label:
+                failed.append(entry)
+        failed = Database(failed)
+        self.score = round(100.0 - len(failed) / len(tdb) * 100.0, 2)
+        return self.score, failed
 
     @abc.abstractmethod
     def c_prime(self, y, a):
@@ -135,7 +139,6 @@ class MLP(metaclass = abc.ABCMeta):
 
         sizes = get(cls.FNAME_SIZES)
         shapes = get(cls.FNAME_SHAPES, np.int32)
-        print(shapes)
         def next_shape():
             nonlocal shapes
             l = shapes[0]
