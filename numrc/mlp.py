@@ -44,9 +44,9 @@ class MLP(metaclass = abc.ABCMeta):
             for batch in batches:
                 self.__run(batch, lr)
             if tdb is not None:
-                self.test(tdb)
+                score, _ = self.test(tdb)
                 print("Epoch {0} tested: {1}% of {2}".format( \
-                    i, self.score, len(tdb)))
+                    i, score, len(tdb)))
             else:
                 print("Epoch {0} done".format(i))
 
@@ -82,8 +82,8 @@ class MLP(metaclass = abc.ABCMeta):
             if self.recognize(entry) != entry.label:
                 failed.append(entry)
         failed = Database(failed)
-        self.score = round(100.0 - len(failed) / len(tdb) * 100.0, 2)
-        return self.score, failed
+        score = round(100.0 - len(failed) / len(tdb) * 100.0, 2)
+        return score, failed
 
     @abc.abstractmethod
     def c_prime(self, y, a):
@@ -97,10 +97,13 @@ class MLP(metaclass = abc.ABCMeta):
     def f_prime(self, z):
         pass
 
-    FNAME_SHAPES = "shapes.npy"
-    FNAME_SIZES = "sizes.npy"
-    FNAME_WEIGHTS = "weights{0}.npy"
-    FNAME_BIASES = "biases{0}.npy"
+    """
+    Uses .npx as it does not follow either .npy or .npz format
+    """
+    FNAME_SHAPES = "shapes.npx"
+    FNAME_SIZES = "sizes.npx"
+    FNAME_WEIGHTS = "weights{0}.npx"
+    FNAME_BIASES = "biases{0}.npx"
 
     def save(self, path):
         path = Path(path)
@@ -113,7 +116,7 @@ class MLP(metaclass = abc.ABCMeta):
             ti.size = len(buf)
             tar.addfile(ti, BytesIO(buf))
 
-        put(MLP.FNAME_SIZES, self.sizes)
+        put(MLP.FNAME_SIZES, self.sizes, np.int32)
         shapes = []
 
         for i, (w, b) in enumerate(zip(self.weights, self.biases)):
@@ -137,7 +140,7 @@ class MLP(metaclass = abc.ABCMeta):
             rd = tar.extractfile(ti)
             return np.frombuffer(rd.read(ti.size), dtype)
 
-        sizes = get(cls.FNAME_SIZES)
+        sizes = get(cls.FNAME_SIZES, np.int32)
         shapes = get(cls.FNAME_SHAPES, np.int32)
         def next_shape():
             nonlocal shapes

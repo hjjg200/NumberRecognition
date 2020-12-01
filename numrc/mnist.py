@@ -19,7 +19,7 @@ def px2f(p):
     """
     map 0 - 255 to 0.0 - 1.0
     """
-    return be2i(p) / 255.0
+    return p / 255.0
 
 def f2px(f):
     return i2be(int(f * 255.0), 1)
@@ -55,7 +55,7 @@ class Database(tuple):
         self = []
         for i in range(n):
             self.append(Entry(np.asarray( \
-                [px2f(fm.read(1)) for _ in range(IMG_SIZE)]), \
+                [px2f(px) for px in fm.read(IMG_SIZE)]), \
                 be2i(fl.read(1))))
 
         fm.close()
@@ -77,9 +77,9 @@ class Database(tuple):
         fm.write(i2be(IMG_ROWS))
         fm.write(i2be(IMG_COLS))
 
-        for x, y in self:
-            fl.write(i2be(y, 1))
-            for f in x.flatten():
+        for entry in self:
+            fl.write(i2be(entry.label, 1))
+            for f in entry.image.flatten():
                 fm.write(f2px(f))
 
         fm.close()
