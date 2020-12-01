@@ -1,5 +1,6 @@
 import numpy as np
 import math
+from enum import Enum
 
 from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, IMG_SQUARE
 
@@ -110,6 +111,65 @@ class Entry:
     def __replace(self, image1):
         return Entry(image1, self.label)
 
+    """
+    Cartesian - raster
+    """
+    @staticmethod
+    def cx(rx):
+        return rx - IMG_COLS / 2.0
+
+    @staticmethod
+    def cy(ry):
+        return -ry + IMG_ROWS / 2.0
+
+    @staticmethod
+    def rx(cx):
+        return int(cx + IMG_COLS / 2.0)
+
+    @staticmethod
+    def ry(cy):
+        return int(IMG_ROWS / 2.0 - cy)
+
+    def corner(self, x_dir, y_dir, threshold=0.0):
+        """
+        x_dir = 0 and y_dir > 0 will push all the pixels to rightmost
+        position without losing any pixel whose value exceeds the threshold
+        """
+        source = self.image.reshape(IMG_SQUARE)
+        projection = np.zeros(IMG_SQUARE)
+        y_dir, x_dir = np.sign(y_dir), np.sign(x_dir)
+        dy, dx = -1, -1
+        for row, col in np.ndindex(IMG_SQUARE):
+            ry0 = row if y_dir > 0 else -row - 1
+            rx0 = -row - 1 if x_dir > 0 else row
+            fy0 = source[ry0][col]
+            fx0 = source[col][rx0]
+            if dy == -1 and fy0 > threshold:
+                dy = row
+            if dx == -1 and fx0 > threshold:
+                dx = row
+        dy *= y_dir * -1 if dy >= 0 else 0
+        dx *= x_dir if dx >= 0 else 0
+
+        for ry1, rx1 in np.ndindex(IMG_SQUARE):
+            ry0, rx0 = ry1 - dy, rx1 - dx
+            if ry0 < 0 or ry0 >= IMG_ROWS or rx0 < 0 or rx0 >= IMG_COLS:
+                continue
+            projection[ry1][rx1] = source[ry0][rx0]
+        return self.__replace(projection.reshape(IMG_SHAPE))
+
+    def squeeze(self, x_factor, y_factor):
+        source = self.image.reshape(IMG_SQUARE)
+        projection = np.zeros(IMG_SQUARE)
+        for ry1, rx1 in np.ndindex(IMG_SQUARE):
+            cy1, cx1 = self.cy(ry1), self.cx(rx1)
+            cy0, cx0 = cy1 / y_factor, cx1 / x_factor
+            ry0, rx0 = self.ry(cy0), self.rx(cx0)
+            if ry0 < 0 or ry0 >= IMG_ROWS or rx0 < 0 or rx0 >= IMG_COLS:
+                continue
+            projection[ry1][rx1] = source[ry0][rx0]
+        return self.__replace(projection.reshape(IMG_SHAPE))
+
     def noise(self, factor):
         delta = np.random.standard_normal(IMG_SHAPE) * factor
         noised = np.maximum(0.0, np.minimum(1.0, self.image + delta))
@@ -121,20 +181,16 @@ class Entry:
     def rotate(self, rad):
         source = self.image.reshape(IMG_SQUARE)
         projection = np.zeros(IMG_SQUARE)
-        hw, hh = IMG_COLS / 2.0, IMG_ROWS / 2.0
-        for y1, x1 in np.ndindex(IMG_SQUARE):
-            ty1 = -y1 + hh
-            tx1 = x1 - hw
-            ty0 = tx1 * math.sin(rad) + ty1 * math.cos(rad)
-            y0 = int(-(ty0 - hh))
-            if y0 < 0 or y0 >= IMG_ROWS:
+        for ry1, rx1 in np.ndindex(IMG_SQUARE):
+            cy1, cx1 = self.cy(ry1), self.cx(rx1)
+            cy0 = cx1 * math.sin(rad) + cy1 * math.cos(rad)
+            ry0 = self.ry(cy0)
+            if ry0 < 0 or ry0 >= IMG_ROWS:
                 continue
-            tx0 = tx1 * math.cos(rad) - ty1 * math.sin(rad)
-            x0 = int(tx0 + hw)
-            if x0 < 0 or x0 >= IMG_COLS:
+            cx0 = cx1 * math.cos(rad) - cy1 * math.sin(rad)
+            rx0 = self.rx(cx0)
+            if rx0 < 0 or rx0 >= IMG_COLS:
                 continue
-            projection[y1][x1] = source[y0][x0]
-
-        projection.reshape(IMG_SHAPE)
-        return self.__replace(projection)
+            projection[ry1][rx1] = source[ry0][rx0]
+        return self.__replace(projection.reshape(IMG_SHAPE))
 
