@@ -1,91 +1,85 @@
 import numpy as np
 import abc
 import time
-import sys
 import random
 from pathlib import Path
-from .mnist import load_data_wrapper
-from faker import Faker
 
-Faker.seed(time.time())
-fake = Faker()
-
-PROJECT_DIR = Path(__file__).parents[1] if __file__ else Path.cwd()
-RECORDS_DIR = PROJECT_DIR / "records"
-RECORDS_DIR.mkdir(exist_ok=True)
+from .constants import IMG_SIZE
 
 class MLP(metaclass = abc.ABCMeta):
 
-    EXT_BIASES = ".biases.npy"
-    EXT_WEIGHTS = ".weights.npy"
+    def __init__(self, *hl_sizes, in_size=IMG_SIZE, out_size=10, rand=True):
+        if rand == False:
+            return
+        sizes = (in_size, *hl_sizes, out_size)
+        self.sizes = sizes
+        self.weights = np.asarray([np.random.randn(j, i) \
+            for i, j in zip(sizes[:-1], sizes[1:])])
+        self.biases = np.asarray([np.random.randn(n, 1) \
+            for n in sizes[1:]])
 
-    def __init__(self, sizes=None, weights=None, biases=None):
-        if sizes is not None:
-            self.sizes = sizes
-            self.biases = np.asarray([np.random.randn(n, 1) \
-                for n in sizes[1:]])
-            self.weights = np.asarray([np.random.randn(j, i) \
-                for i, j in zip(sizes[:-1], sizes[1:])])
-        elif weights is not None and biases is not None:
-            self.weights = weights
-            self.biases = biases
+    @classmethod
+    def from_data(cls, weights, biases):
+        self = cls(rand=False)
+        self.weights = weights
+        self.biases = biases
+        return self
 
-    def feedforward(self, a):
-        for b, w in zip(self.biases, self.weights):
-            """ Apply weights and biases respectively """
+    def recognize(self, entry):
+        a = entry.image
+        for w, b in zip(self.weights, self.biases):
             a = self.f(np.dot(w, a) + b)
-        return a
+        return np.argmax(a)
 
-    def train(self, data, epochs, batch_size, lr, test_data=None):
+    def train(self, db, epochs, batch_size, lr, tdb=None):
+        db = list(db)
         for i in range(epochs):
-            random.shuffle(data)
-            batches = [data[j:j + batch_size] \
-                for j in range(0, len(data), batch_size)]
+            random.shuffle(db)
+            batches = [db[j:j + batch_size] \
+                for j in range(0, len(db), batch_size)]
             for batch in batches:
                 self.__run(batch, lr)
-            if test_data is not None:
-                self.test(test_data)
-                print("Epoch {0} tested: {1}/{2}".format( \
-                    i, self.score, len(test_data)))
+            if tdb is not None:
+                self.test(tdb)
+                print("Epoch {0} tested: {1}% of {2}".format( \
+                    i, self.score, len(tdb)))
             else:
                 print("Epoch {0} done".format(i))
 
     def __run(self, batch, lr):
-        grad_c_b = np.asarray([np.zeros(b.shape) for b in self.biases])
         grad_c_w = np.asarray([np.zeros(w.shape) for w in self.weights])
-        for i, y in batch: # input and desired value
-            a = i
-            activations = [a]
+        grad_c_b = np.asarray([np.zeros(b.shape) for b in self.biases])
+        for entry in batch:
+            a, label = entry.image, entry.label
+            y = np.zeros((10, 1))
+            y[label] = 1.0
+            as_ = [a]
             zs = []
-            for b, w in zip(self.biases, self.weights):
+            for w, b in zip(self.weights, self.biases):
                 z = np.dot(w, a) + b
                 zs.append(z)
                 a = self.f(z)
-                activations.append(a)
-            #
-            d_c = self.c_prime(activations[-1], y) * \
-                self.f_prime(zs[-1])
+                as_.append(a)
+            d_c = self.c_prime(y, as_[-1]) * self.f_prime(zs[-1])
+            grad_c_w[-1] += np.dot(d_c, as_[-2].transpose())
             grad_c_b[-1] += d_c
-            grad_c_w[-1] += np.dot(d_c, activations[-2].transpose())
-            #
             for j in range(2, len(self.sizes)):
                 z = zs[-j]
                 d_v = self.f_prime(z)
                 d_c = np.dot(self.weights[-j + 1].transpose(), d_c) * d_v
+                grad_c_w[-j] += np.dot(d_c, as_[-j - 1].transpose())
                 grad_c_b[-j] += d_c
-                grad_c_w[-j] += np.dot(d_c, activations[-j - 1].transpose())
-        #
-        self.biases -= (lr / len(batch)) * grad_c_b
         self.weights -= (lr / len(batch)) * grad_c_w
+        self.biases -= (lr / len(batch)) * grad_c_b
 
-    def test(self, data):
-        results = [(np.argmax(self.feedforward(i)), y) \
-            for i, y in data]
-        self.score = sum(int(i == y) for (i, y) in results)
+    def test(self, tdb):
+        success = sum(int(self.recognize(entry) == entry.label) \
+            for entry in tdb) * 1.0
+        self.score = round(success / len(tdb) * 100.0, 2)
         return self.score
 
     @abc.abstractmethod
-    def c_prime(self, a, y):
+    def c_prime(self, y, a):
         pass
 
     @abc.abstractmethod
@@ -147,7 +141,7 @@ class SigmoidMLP(MLP):
         return 1.0 / (1.0 + np.exp(-z))
     def f_prime(self, z):
         return self.f(z) * (1.0 - self.f(z))
-    def c_prime(self, a, y):
+    def c_prime(self, y, a):
         return a - y
 
 """
@@ -162,12 +156,4 @@ class ReLUMLP(MLP):
     def c_prime(self, a, y):
         pass
 """
-
-if __name__ == "__main__" and False:
-    # Check for args
-    mlp = SigmoidMLP([784,30,10])
-    if(len(sys.argv) > 1):
-        mlp.load(sys.argv[1])
-    mlp.train(data, 30, 10, 3.0, test_data)
-    mlp.save()
 

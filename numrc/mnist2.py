@@ -1,11 +1,7 @@
 import numpy as np
 import math
 
-IMG_ROWS = 28
-IMG_COLS = 28
-IMG_SIZE = IMG_ROWS * IMG_COLS
-IMG_SHAPE = (IMG_SIZE,)
-IMG_SQUARE = (IMG_ROWS, IMG_COLS)
+from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, IMG_SQUARE
 
 """
 Utility methods
@@ -45,8 +41,8 @@ class Database(tuple):
     @classmethod
     def load(cls, image_path, label_path):
 
-        fm = open(image_path, 'rb')
-        fl = open(label_path, 'rb')
+        fm = open(image_path, 'rb', 4096)
+        fl = open(label_path, 'rb', 4096)
 
         assert be2i(fm.read(4)) == Database.MAGIC_IMAGE
         assert be2i(fl.read(4)) == Database.MAGIC_LABEL
@@ -70,8 +66,8 @@ class Database(tuple):
     def save(self, image_path, label_path):
 
         # Open in exclusive creation mode
-        fm = open(image_path, 'xb')
-        fl = open(label_path, 'xb')
+        fm = open(image_path, 'xb', 4096)
+        fl = open(label_path, 'xb', 4096)
 
         n = len(self)
         fm.write(i2be(Database.MAGIC_IMAGE))
@@ -93,8 +89,8 @@ class Database(tuple):
 Entry related
 """
 
-PAINT_COLORS = tuple("\x1b[48;5;%dm \x1b[0m" % n for n in \
-        (231,) + tuple(range(255, 231, -1)) + (16,))
+PAINT_COLORS = tuple("\x1b[48;5;%dm \x1b[0m" % n \
+    for n in range(255, 231, -1))
 
 class Entry(tuple):
 
@@ -109,8 +105,8 @@ class Entry(tuple):
     def print(self, widen=2):
         for row in self.image.reshape(IMG_SQUARE):
             print("".join( \
-                [PAINT_COLORS[int(f * (len(PAINT_COLORS) - 1))] * widen \
-                for f in row]))
+                PAINT_COLORS[int(f * (len(PAINT_COLORS) - 1))] * widen \
+                for f in row))
         print("Label: %d" % self.label)
 
     def __replace(self, image1):
