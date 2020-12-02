@@ -1,6 +1,16 @@
 # NumberRecognition
 Experimental project about combining neural network with genetic algorithm
 
+```python
+>>> import numrc.mlp as mlp
+>>> import numrc.mnist as mn
+
+>>> db = mn.Database.load("image", "label")
+>>> db[0].print()
+>>> m1 = mlp.SigmoidMLP(30)
+>>> m1.recognize(db[0])
+```
+
 ## Results
 
 ### `aug-92_23.tar.gz`
