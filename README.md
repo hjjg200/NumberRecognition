@@ -17,6 +17,13 @@ Experimental project about combining neural network with genetic algorithm
 
 OpenCL is planned to be used for image deformation.
 
+### Benchmarks
+
+Rotation of 60,000 images took:
+
+* Python, Synchronized CPU operations: ~20 seconds
+* OpenCL, Parallel GPU operations: ~1 second
+
 ## Results
 
 ### `aug-92_23.tar.gz`
