@@ -98,46 +98,72 @@ class Database:
         fm.close()
         fl.close()
 
-    def test_rotate_all(self, rad):
-        vars_dict = {'rows': IMG_ROWS, 'cols': IMG_COLS, \
-            'hr': IMG_ROWS / 2.0, 'hc': IMG_COLS / 2.0}
-        program = cl.Program(clu.CTX, """
-        #define ROWS %(rows)d
-        #define COLS %(cols)d
-        #define HR %(hr)f
-        #define HC %(hc)f
-        #define CY(ry) -ry + HR
-        #define CX(rx) rx - HC
-        #define RY(cy) HR - cy
-        #define RX(cx) cx + HC
-        #define IDX(gid, ry, rx) (ROWS * (gid + ry)) + rx
+    program = cl.Program(clu.CTX, """
+    #define SIZE {size:d}
+    #define ROWS {rows:d}
+    #define COLS {cols:d}
+    #define HR {hr:f}
+    #define HC {hc:f}
+    """.format(size=IMG_SIZE, rows=IMG_ROWS, cols=IMG_COLS, \
+        hr=IMG_ROWS / 2.0, hc=IMG_COLS / 2.0) + """
+    #define CY(ry) -ry + HR
+    #define CX(rx) rx - HC
+    #define RY(cy) HR - cy
+    #define RX(cx) cx + HC
+    #define IDX(g_id, ry, rx) (COLS * (g_id + ry)) + rx
 
-        __kernel void Do(
-            __global float *in,
-            __global float *r,
-            __global float *out) {
-            int gid = get_global_id(0) / 784;
-            int ry1 = get_global_id(0) %% 784;
-            int rx1 = get_global_id(1);
-            float cy1 = CY(ry1);
-            float cx1 = CX(rx1);
-            float cy0 = cx1 * r[2] + cy1 * r[3];
-            int ry0 = RY(cy0);
-            if(ry0 < 0 || ry0 >= ROWS) return;
-            float cx0 = cx1 * r[0] + cy1 * r[1];
-            int rx0 = RX(cx0);
-            if(rx0 < 0 || rx0 >= COLS) return;
-            out[IDX(gid, ry1, rx1)] = in[IDX(gid, ry0, rx0)];
-        }
-        """ % vars_dict).build()
-        out = np.empty_like(self.images)
-        buf = clu.new_out(out)
-        c, s = math.cos(rad), math.sin(rad)
-        r = np.asarray([c, -s, s, c]).astype(np.float32)
-        program.Do(clu.Q, (28 * len(self), 28), None, \
-            clu.copy_in(self.images), clu.copy_in(r), buf)
-        cl.enqueue_copy(clu.Q, out, buf)
-        np.copyto(self.images, out)
+    __kernel void Rotate(
+        __global float *in,
+        __global float *rads,
+        __global float *out) {
+        int g_id = get_global_id(0) / ROWS;
+        int ry1 = get_global_id(0) % ROWS;
+        int rx1 = get_global_id(1);
+        float cy1 = CY(ry1);
+        float cx1 = CX(rx1);
+        if(g_id == 0) printf("%d %d\\n", rx1, ry1);
+        float c = cos(rads[g_id]);
+        float s = sin(rads[g_id]);
+        float cy0 = cx1 * s + cy1 * c;
+        int ry0 = RY(cy0);
+        if(ry0 < 0 || ry0 >= ROWS) return;
+        float cx0 = cx1 * c - cy1 * s;
+        int rx0 = RX(cx0);
+        if(rx0 < 0 || rx0 >= COLS) return;
+        out[IDX(g_id, ry1, rx1)] = in[IDX(g_id, ry0, rx0)];
+    }
+
+    __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_NEAREST;
+    __kernel void Rotate2(
+        __read_only image2d_array_t src,
+        __const float rad,
+        __write_only image2d_array_t dest) {
+        int4 zxy = (int4)(get_global_id(0), get_global_id(2), get_global_id(1), 0);
+        float4 cl = read_imagef(src, sampler, zxy);
+        cl.x = 1.0 - cl.x;
+        write_imagef(dest, zxy, cl);
+    }
+    """).build()
+
+    def test_rotate_all(self, rads):
+        fmt = cl.ImageFormat(cl.channel_order.R, \
+            cl.channel_type.FLOAT)
+        src = self.images
+        shp = (len(self), *IMG_SQUARE)
+        img = cl.Image(clu.CTX, clu.MF.READ_ONLY | clu.MF.COPY_HOST_PTR, \
+            fmt, shape=shp, hostbuf=src, is_array=True)
+        dest = cl.Image(clu.CTX, clu.MF.WRITE_ONLY, fmt, shape=shp)
+        self.program.Rotate2(clu.Q, shp, None, img, \
+            np.float32(3.14 / 4), dest)
+        cl.enqueue_copy(clu.Q, self.images, dest, origin=(0,0,0), \
+            region=shp, is_blocking=True)
+        return
+
+
+        buf = clu.new_out(self.images)
+        self.program.Rotate(clu.Q, (IMG_ROWS * len(self), IMG_COLS), \
+            None, clu.copy_in(self.images), clu.copy_in(rads), buf)
+        cl.enqueue_copy(clu.Q, self.images, buf)
 
 """
 Entry related
@@ -223,20 +249,6 @@ class Entry:
     #define RX(cx) cx + HC
     #define IDX(y, x) y * COLS + x
 
-    __kernel void Corner(
-        __global float *a,
-        const int y_dir,
-        const int x_dir,
-        const float threshold,
-        __global float *out) {
-        int row = get_global_id(0);
-        int col = get_global_id(1);
-        int dy = -1;
-        int dx = -1;
-
-
-    }
-
     __kernel void Squeeze(
         __global float *a,
         const float y_factor,
@@ -285,7 +297,7 @@ class Entry:
         if(rx0 < 0 || rx0 >= COLS) return;
         out[IDX(ry1, rx1)] = a[IDX(ry0, rx0)];
     }
-    """ % vars_dict).build()
+    """ % vars_dict)
 
     def squeeze(self, x_factor, y_factor):
         out = np.empty_like(self.image)
