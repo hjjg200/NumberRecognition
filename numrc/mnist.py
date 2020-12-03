@@ -3,8 +3,9 @@ import math
 import pyopencl as cl
 from enum import Enum
 
+import clutil as clu
 from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, \
-    IMG_SQUARE, CL_CTX, CL_Q
+    IMG_SQUARE
 
 """
 Utility methods
@@ -100,7 +101,7 @@ class Entry:
     def __init__(self, image, label):
         if image.shape != IMG_SHAPE:
             image = image.reshape(IMG_SHAPE)
-        self.image = image
+        self.image = image.astype(np.float32)
         self.label = label
 
     def print(self, widen=2):
@@ -172,45 +173,74 @@ class Entry:
             projection[ry1][rx1] = source[ry0][rx0]
         return self.__replace(projection.reshape(IMG_SHAPE))
 
-    def noise(self, factor):
-        delta = np.random.standard_normal(IMG_SHAPE) * factor
-        noised = np.maximum(0.0, np.minimum(1.0, self.image + delta))
-        return self.__replace(noised)
+    vars_dict = {'rows': IMG_ROWS, 'cols': IMG_COLS, 'hr': IMG_ROWS / 2.0,
+        'hc': IMG_COLS / 2.0}
+    programs = cl.Program(clu.CTX, """
+    #define ROWS %(rows)d
+    #define COLS %(cols)d
+    #define HR %(hr)f
+    #define HC %(hc)f
+    #define IDX(y, x) y * COLS + x
 
-    programs = cl.Program(CL_CTX, """
-    __kernel void invert(
+    __kernel void Invert(
         __global float *a,
-        __global float *buf) {
+        __global float *out) {
         int i = get_global_id(0);
-        buf[i] = 1.0 - a[i];
+        out[i] = 1.0 - a[i];
     }
-    """).build()
 
-    def invert(self):
-        mf = cl.mem_flags
-        img = self.image.astype(np.float32)
-        a = cl.Buffer(CL_CTX, mf.READ_ONLY | mf.COPY_HOST_PTR, \
-            hostbuf=img)
-        buf = cl.Buffer(CL_CTX, mf.WRITE_ONLY, self.image.nbytes)
-        self.programs.invert(CL_Q, img.shape, None, a, buf)
-        out = np.empty_like(img)
-        cl.enqueue_copy(CL_Q, out, buf)
-        print(out)
-        return self.__replace(out)
+    __kernel void Noise(
+        __global float *a,
+        __global float *d,
+        __global float *out) {
+        int i = get_global_id(0);
+        out[i] = max(min(a[i] + d[i], 1.0), 0.0);
+    }
+
+    __kernel void Rotate(
+        __global float *a,
+        __global float *r,
+        __global float *out) {
+        int ry1 = get_global_id(0);
+        int rx1 = get_global_id(1);
+        float cy1 = -ry1 + HR;
+        float cx1 = rx1 - HC;
+        float cy0 = cx1 * r[2] + cy1 * r[3];
+        int ry0 = HR - cy0;
+        if(ry0 < 0 || ry0 >= ROWS) return;
+        float cx0 = cx1 * r[0] + cy1 * r[1];
+        int rx0 = cx0 + HC;
+        if(rx0 < 0 || rx0 >= COLS) return;
+        out[IDX(ry1, rx1)] = a[IDX(ry0, rx0)];
+    }
+    """ % vars_dict).build()
 
     def rotate(self, rad):
-        source = self.image.reshape(IMG_SQUARE)
-        projection = np.zeros(IMG_SQUARE)
-        for ry1, rx1 in np.ndindex(IMG_SQUARE):
-            cy1, cx1 = self.cy(ry1), self.cx(rx1)
-            cy0 = cx1 * math.sin(rad) + cy1 * math.cos(rad)
-            ry0 = self.ry(cy0)
-            if ry0 < 0 or ry0 >= IMG_ROWS:
-                continue
-            cx0 = cx1 * math.cos(rad) - cy1 * math.sin(rad)
-            rx0 = self.rx(cx0)
-            if rx0 < 0 or rx0 >= IMG_COLS:
-                continue
-            projection[ry1][rx1] = source[ry0][rx0]
-        return self.__replace(projection.reshape(IMG_SHAPE))
+        out = np.empty_like(self.image)
+        buf = clu.new_out(out)
+        c, s = math.cos(rad), math.sin(rad)
+        r = np.asarray([c, -s, s, c]).astype(np.float32)
+        self.programs.Rotate(clu.Q, IMG_SQUARE, None, \
+            clu.copy_in(self.image), clu.copy_in(r), buf)
+        cl.enqueue_copy(clu.Q, out, buf)
+        return self.__replace(out)
+
+    def noise(self, factor):
+        delta = (np.random.standard_normal(IMG_SHAPE) * factor) \
+            .astype(np.float32)
+        out = np.empty_like(self.image)
+        buf = clu.new_out(out)
+        self.programs.Noise(clu.Q, self.image.shape, None, \
+            clu.copy_in(self.image), clu.copy_in(delta), buf)
+        cl.enqueue_copy(clu.Q, out, buf)
+        return self.__replace(out)
+
+    def invert(self):
+        out = np.empty_like(self.image)
+        buf = clu.new_out(out)
+        self.programs.Invert(clu.Q, self.image.shape, None, \
+            clu.copy_in(self.image), buf)
+        cl.enqueue_copy(clu.Q, out, buf)
+        return self.__replace(out)
+
 

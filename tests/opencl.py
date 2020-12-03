@@ -12,24 +12,23 @@ out = np.zeros(10).astype(np.int32)
 
 b_n1 = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=n1)
 b_n2 = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=n2)
-b_out = cl.Buffer(ctx, mf.WRITE_ONLY, out.nbytes)
+b_out = cl.Buffer(ctx, mf.WRITE_ONLY | mf.USE_HOST_PTR, hostbuf=out)
 
 prog = cl.Program(ctx, """
 __kernel void prog(
-    int num,
     __global int* n1,
     __global int *n2,
-    __global int *out,
-    __local int *locals)
+    __global int *out)
 {
-    printf("%d\\n", num);
-    printf("%d %d", locals[0], locals[1]);
     int i = get_global_id(0);
+    int j = get_global_id(1);
+    printf("%d %d\\n", i, j);
     out[i] = n1[i] + n2[i];
+    printf("%d ", i);
 }
 """).build()
 
-prog.prog(queue, (10,), (2,), b_n1, b_n2, b_out)
-cl.enqueue_copy(queue, out, b_out)
+ev = prog.prog(queue, (5,2), None, b_n1, b_n2, b_out)
+ev.wait()
 
 print(out)
