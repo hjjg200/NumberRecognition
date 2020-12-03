@@ -1,6 +1,12 @@
 import numpy as np
 import random
 
+from .mnist import Database
+
+def load_tdb():
+    return Database.load("data/t10k-images.idx3-ubyte", \
+        "data/t10k-labels.idx1-ubyte")
+
 def distort_entry(entry):
     r = lambda x, y: np.random.randint(x, y + 1)
 

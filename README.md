@@ -4,11 +4,13 @@ Experimental project about combining neural network with genetic algorithm
 ```python
 >>> import numrc.mlp as mlp
 >>> import numrc.mnist as mn
+>>> import numrc.experimental as exp
 
 >>> db = mn.Database.load("image", "label")
 >>> db[0].print()
 >>> m1 = mlp.SigmoidMLP(30)
 >>> m1.recognize(db[0])
+>>> exp.test_distortion(db)
 ```
 
 ## Results

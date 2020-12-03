@@ -1,3 +1,7 @@
+import pyopencl as cl
+
+CL_CTX = cl.create_some_context()
+CL_Q = cl.CommandQueue(CL_CTX)
 
 IMG_ROWS = 28
 IMG_COLS = 28

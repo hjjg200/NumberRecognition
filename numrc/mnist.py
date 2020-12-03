@@ -1,8 +1,10 @@
 import numpy as np
 import math
+import pyopencl as cl
 from enum import Enum
 
-from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, IMG_SQUARE
+from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, \
+    IMG_SQUARE, CL_CTX, CL_Q
 
 """
 Utility methods
@@ -175,8 +177,26 @@ class Entry:
         noised = np.maximum(0.0, np.minimum(1.0, self.image + delta))
         return self.__replace(noised)
 
+    programs = cl.Program(CL_CTX, """
+    __kernel void invert(
+        __global float *a,
+        __global float *buf) {
+        int i = get_global_id(0);
+        buf[i] = 1.0 - a[i];
+    }
+    """).build()
+
     def invert(self):
-        return self.__replace(1.0 - self.image)
+        mf = cl.mem_flags
+        img = self.image.astype(np.float32)
+        a = cl.Buffer(CL_CTX, mf.READ_ONLY | mf.COPY_HOST_PTR, \
+            hostbuf=img)
+        buf = cl.Buffer(CL_CTX, mf.WRITE_ONLY, self.image.nbytes)
+        self.programs.invert(CL_Q, img.shape, None, a, buf)
+        out = np.empty_like(img)
+        cl.enqueue_copy(CL_Q, out, buf)
+        print(out)
+        return self.__replace(out)
 
     def rotate(self, rad):
         source = self.image.reshape(IMG_SQUARE)

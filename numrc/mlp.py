@@ -44,7 +44,8 @@ class MLP(metaclass = abc.ABCMeta):
             for batch in batches:
                 self.__run(batch, lr)
             if tdb is not None:
-                score, _ = self.test(tdb)
+                score, failed = self.test(tdb)
+                self.__run(failed, lr)
                 print("Epoch {0} tested: {1}% of {2}".format( \
                     i, score, len(tdb)))
             else:
