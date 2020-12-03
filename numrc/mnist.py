@@ -3,7 +3,7 @@ import math
 import pyopencl as cl
 from enum import Enum
 
-import clutil as clu
+from . import clutil as clu
 from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, \
     IMG_SQUARE
 
@@ -34,13 +34,19 @@ Database class
 Load and save operations follow the specified format in
 http://yann.lecun.com/exdb/mnist/
 """
-class Database(tuple):
+class Database:
 
     MAGIC_IMAGE = 2051
     MAGIC_LABEL = 2049
 
-    def __new__(cls, self):
-        return super(Database, cls).__new__(cls, self)
+    def __init__(self):
+        pass
+
+    def __len__(self):
+        return len(self.entries)
+
+    def __getitem__(self, key):
+        return self.entries[key]
 
     @classmethod
     def load(cls, image_path, label_path):
@@ -56,18 +62,21 @@ class Database(tuple):
         # Check rows and cols
         assert be2i(fm.read(8)) == (IMG_ROWS << 32) | IMG_COLS
 
-        self = []
-        for i in range(n):
-            self.append(Entry(np.asarray( \
-                [px2f(px) for px in fm.read(IMG_SIZE)]), \
-                be2i(fl.read(1))))
+        self = cls()
+        self.images = [px2f(px) for px in fm.read(IMG_SIZE * n)]
+        self.images = np.asarray(self.images, dtype=np.float32)
+        self.labels = [l for l in fl.read(n)]
+        self.labels = np.asarray(self.labels, dtype=np.int32)
+        self.entries = [Entry(self.images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
+            self.labels[i]) for i in range(n)]
 
         fm.close()
         fl.close()
 
-        return cls(self)
+        return self
 
     def save(self, image_path, label_path):
+        return # Disabled atm
 
         # Open in exclusive creation mode
         fm = open(image_path, 'xb', 4096)
@@ -89,6 +98,47 @@ class Database(tuple):
         fm.close()
         fl.close()
 
+    def test_rotate_all(self, rad):
+        vars_dict = {'rows': IMG_ROWS, 'cols': IMG_COLS, \
+            'hr': IMG_ROWS / 2.0, 'hc': IMG_COLS / 2.0}
+        program = cl.Program(clu.CTX, """
+        #define ROWS %(rows)d
+        #define COLS %(cols)d
+        #define HR %(hr)f
+        #define HC %(hc)f
+        #define CY(ry) -ry + HR
+        #define CX(rx) rx - HC
+        #define RY(cy) HR - cy
+        #define RX(cx) cx + HC
+        #define IDX(gid, ry, rx) (ROWS * (gid + ry)) + rx
+
+        __kernel void Do(
+            __global float *in,
+            __global float *r,
+            __global float *out) {
+            int gid = get_global_id(0) / 784;
+            int ry1 = get_global_id(0) %% 784;
+            int rx1 = get_global_id(1);
+            float cy1 = CY(ry1);
+            float cx1 = CX(rx1);
+            float cy0 = cx1 * r[2] + cy1 * r[3];
+            int ry0 = RY(cy0);
+            if(ry0 < 0 || ry0 >= ROWS) return;
+            float cx0 = cx1 * r[0] + cy1 * r[1];
+            int rx0 = RX(cx0);
+            if(rx0 < 0 || rx0 >= COLS) return;
+            out[IDX(gid, ry1, rx1)] = in[IDX(gid, ry0, rx0)];
+        }
+        """ % vars_dict).build()
+        out = np.empty_like(self.images)
+        buf = clu.new_out(out)
+        c, s = math.cos(rad), math.sin(rad)
+        r = np.asarray([c, -s, s, c]).astype(np.float32)
+        program.Do(clu.Q, (28 * len(self), 28), None, \
+            clu.copy_in(self.images), clu.copy_in(r), buf)
+        cl.enqueue_copy(clu.Q, out, buf)
+        np.copyto(self.images, out)
+
 """
 Entry related
 """
@@ -99,9 +149,7 @@ PAINT_COLORS = tuple("\x1b[48;5;%dm \x1b[0m" % n \
 class Entry:
 
     def __init__(self, image, label):
-        if image.shape != IMG_SHAPE:
-            image = image.reshape(IMG_SHAPE)
-        self.image = image.astype(np.float32)
+        self.image = np.asarray(image, dtype=np.float32).reshape(IMG_SHAPE)
         self.label = label
 
     def print(self, widen=2):
@@ -161,17 +209,6 @@ class Entry:
             projection[ry1][rx1] = source[ry0][rx0]
         return self.__replace(projection.reshape(IMG_SHAPE))
 
-    def squeeze(self, x_factor, y_factor):
-        source = self.image.reshape(IMG_SQUARE)
-        projection = np.zeros(IMG_SQUARE)
-        for ry1, rx1 in np.ndindex(IMG_SQUARE):
-            cy1, cx1 = self.cy(ry1), self.cx(rx1)
-            cy0, cx0 = cy1 / y_factor, cx1 / x_factor
-            ry0, rx0 = self.ry(cy0), self.rx(cx0)
-            if ry0 < 0 or ry0 >= IMG_ROWS or rx0 < 0 or rx0 >= IMG_COLS:
-                continue
-            projection[ry1][rx1] = source[ry0][rx0]
-        return self.__replace(projection.reshape(IMG_SHAPE))
 
     vars_dict = {'rows': IMG_ROWS, 'cols': IMG_COLS, 'hr': IMG_ROWS / 2.0,
         'hc': IMG_COLS / 2.0}
@@ -180,7 +217,42 @@ class Entry:
     #define COLS %(cols)d
     #define HR %(hr)f
     #define HC %(hc)f
+    #define CY(ry) -ry + HR
+    #define CX(rx) rx - HC
+    #define RY(cy) HR - cy
+    #define RX(cx) cx + HC
     #define IDX(y, x) y * COLS + x
+
+    __kernel void Corner(
+        __global float *a,
+        const int y_dir,
+        const int x_dir,
+        const float threshold,
+        __global float *out) {
+        int row = get_global_id(0);
+        int col = get_global_id(1);
+        int dy = -1;
+        int dx = -1;
+
+
+    }
+
+    __kernel void Squeeze(
+        __global float *a,
+        const float y_factor,
+        const float x_factor,
+        __global float *out) {
+        int ry1 = get_global_id(0);
+        int rx1 = get_global_id(1);
+        float cy1 = CY(ry1);
+        float cx1 = CX(rx1);
+        float cy0 = cy1 / y_factor;
+        float cx0 = cx1 / x_factor;
+        int ry0 = RY(cy0);
+        int rx0 = RX(cx0);
+        if(ry0 < 0 || ry0 >= ROWS || rx0 < 0 || rx0 >= COLS) return;
+        out[IDX(ry1, rx1)] = a[IDX(ry0, rx0)];
+    }
 
     __kernel void Invert(
         __global float *a,
@@ -203,17 +275,26 @@ class Entry:
         __global float *out) {
         int ry1 = get_global_id(0);
         int rx1 = get_global_id(1);
-        float cy1 = -ry1 + HR;
-        float cx1 = rx1 - HC;
+        float cy1 = CY(ry1);
+        float cx1 = CX(rx1);
         float cy0 = cx1 * r[2] + cy1 * r[3];
-        int ry0 = HR - cy0;
+        int ry0 = RY(cy0);
         if(ry0 < 0 || ry0 >= ROWS) return;
         float cx0 = cx1 * r[0] + cy1 * r[1];
-        int rx0 = cx0 + HC;
+        int rx0 = RX(cx0);
         if(rx0 < 0 || rx0 >= COLS) return;
         out[IDX(ry1, rx1)] = a[IDX(ry0, rx0)];
     }
     """ % vars_dict).build()
+
+    def squeeze(self, x_factor, y_factor):
+        out = np.empty_like(self.image)
+        buf = clu.new_out(out)
+        self.programs.Squeeze(clu.Q, IMG_SQUARE, None, \
+            clu.copy_in(self.image), np.float32(y_factor), \
+            np.float32(x_factor), buf)
+        cl.enqueue_copy(clu.Q, out, buf)
+        return self.__replace(out)
 
     def rotate(self, rad):
         out = np.empty_like(self.image)

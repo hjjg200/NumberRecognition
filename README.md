@@ -13,6 +13,10 @@ Experimental project about combining neural network with genetic algorithm
 >>> exp.test_distortion(db)
 ```
 
+## OpenCL
+
+OpenCL is planned to be used for image deformation.
+
 ## Results
 
 ### `aug-92_23.tar.gz`

@@ -12,13 +12,13 @@ def distort_entry(entry):
 
     # Element-wise
     entry = entry.rotate(np.radians(r(-17, 17)))
-    entry = entry.squeeze(r(18, 20) / 20.0, r(18, 20) / 20.0)
-    entry = entry.corner(r(-1, 1), r(-1, 1))
+    #entry = entry.squeeze(r(18, 20) / 20.0, r(18, 20) / 20.0)
+    #entry = entry.corner(r(-1, 1), r(-1, 1))
 
     # Post processing
-    entry = entry.noise(r(1, 10) / 10.0 * 0.15)
-    if r(1, 10) > 5:
-        entry = entry.invert()
+    #entry = entry.noise(r(1, 10) / 10.0 * 0.15)
+    #if r(1, 10) > 5:
+        #entry = entry.invert()
 
     return entry
 
