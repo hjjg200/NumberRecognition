@@ -110,30 +110,37 @@ class Database:
     #define CX(rx) rx - HC
     #define RY(cy) HR - cy
     #define RX(cx) cx + HC
-    #define IDX(g_id, ry, rx) (COLS * (g_id + ry)) + rx
+
+    __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+        CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
     __kernel void Rotate(
-        __global float *in,
+        __read_only image2d_array_t src,
         __global float *rads,
-        __global float *out) {
-        int g_id = get_global_id(0) / ROWS;
-        int ry1 = get_global_id(0) % ROWS;
-        int rx1 = get_global_id(1);
-        float cy1 = CY(ry1);
-        float cx1 = CX(rx1);
-        if(g_id == 0) printf("%d %d\\n", rx1, ry1);
-        float c = cos(rads[g_id]);
-        float s = sin(rads[g_id]);
+        __write_only image2d_array_t dest) {
+
+        int z = get_global_id(2);
+        int4 xyz1 = (int4)(get_global_id(1), get_global_id(0), z, 0);
+
+        // Cartesian and rotation
+        float cy1 = CY(xyz1.y);
+        float cx1 = CX(xyz1.x);
+        float c = cos(rads[z]);
+        float s = sin(rads[z]);
         float cy0 = cx1 * s + cy1 * c;
         int ry0 = RY(cy0);
         if(ry0 < 0 || ry0 >= ROWS) return;
         float cx0 = cx1 * c - cy1 * s;
         int rx0 = RX(cx0);
         if(rx0 < 0 || rx0 >= COLS) return;
-        out[IDX(g_id, ry1, rx1)] = in[IDX(g_id, ry0, rx0)];
+
+        int4 xyz0 = (int4)(rx0, ry0, z, 0);
+
+        float4 cl0 = read_imagef(src, sampler, xyz0);
+        write_imagef(dest, xyz1, cl0);
+
     }
 
-    __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_NEAREST;
     __kernel void Rotate2(
         __read_only image2d_array_t src,
         __const float rad,
@@ -149,12 +156,12 @@ class Database:
         fmt = cl.ImageFormat(cl.channel_order.R, \
             cl.channel_type.FLOAT)
         src = self.images
-        shp = (len(self), *IMG_SQUARE)
+        shp = (*IMG_SQUARE, len(self))
         img = cl.Image(clu.CTX, clu.MF.READ_ONLY | clu.MF.COPY_HOST_PTR, \
             fmt, shape=shp, hostbuf=src, is_array=True)
         dest = cl.Image(clu.CTX, clu.MF.WRITE_ONLY, fmt, shape=shp)
-        self.program.Rotate2(clu.Q, shp, None, img, \
-            np.float32(3.14 / 4), dest)
+        self.program.Rotate(clu.Q, shp, None, img, \
+            clu.copy_in(rads), dest)
         cl.enqueue_copy(clu.Q, self.images, dest, origin=(0,0,0), \
             region=shp, is_blocking=True)
         return
