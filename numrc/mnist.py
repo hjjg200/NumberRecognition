@@ -141,18 +141,39 @@ class Database:
 
     }
 
-    __kernel void Rotate2(
-        __read_only image2d_array_t src,
-        __const float rad,
-        __write_only image2d_array_t dest) {
-        int4 zxy = (int4)(get_global_id(0), get_global_id(2), get_global_id(1), 0);
-        float4 cl = read_imagef(src, sampler, zxy);
-        cl.x = 1.0 - cl.x;
-        write_imagef(dest, zxy, cl);
-    }
     """).build()
 
+    @staticmethod
+    def npary_to_src_dest(ary):
+        """
+        Channel Order R and Channel Type Float gives one channeled float
+        type of image
+        """
+        length = int(len(ary) / IMG_SIZE)
+        fmt = cl.ImageFormat(cl.channel_order.R, cl.channel_type.FLOAT)
+        # Z-axis(length) is placed as the last element
+        region = (*IMG_SQUARE, length) # i.e. shape
+
+        # Create as image2d_array_t
+        # src here will not have shape because it is not image3d_t
+        # only images have shapes, says opencl
+        src = cl.Image(clu.CTX, clu.MF.READ_ONLY | clu.MF.COPY_HOST_PTR, \
+            fmt, shape=region, hostbuf=ary, is_array=True)
+        # dest is same-sized empty buffer for new image
+        dest = cl.Image(clu.CTX, clu.MF.WRITE_ONLY, fmt, shape=region)
+
+        return src, dest
+
     def test_rotate_all(self, rads):
+        src, dest = self.npary_to_src_dest(self.images)
+        shape = dest.shape
+        self.program.Rotate(clu.Q, shape, None, src, clu.copy_in(rads), \
+            dest)
+        cl.enqueue_copy(clu.Q, self.images, dest, origin=(0,0,0), \
+            region=shape)
+
+        return
+
         fmt = cl.ImageFormat(cl.channel_order.R, \
             cl.channel_type.FLOAT)
         src = self.images
@@ -164,13 +185,6 @@ class Database:
             clu.copy_in(rads), dest)
         cl.enqueue_copy(clu.Q, self.images, dest, origin=(0,0,0), \
             region=shp, is_blocking=True)
-        return
-
-
-        buf = clu.new_out(self.images)
-        self.program.Rotate(clu.Q, (IMG_ROWS * len(self), IMG_COLS), \
-            None, clu.copy_in(self.images), clu.copy_in(rads), buf)
-        cl.enqueue_copy(clu.Q, self.images, buf)
 
 """
 Entry related
