@@ -1,7 +1,7 @@
 import numpy as np
 import math
 import pyopencl as cl
-from enum import Enum
+from dataclasses import dataclass
 
 from . import clutil as clu
 from .constants import IMG_ROWS, IMG_COLS, IMG_SIZE, IMG_SHAPE, \
@@ -39,8 +39,116 @@ class Database:
     MAGIC_IMAGE = 2051
     MAGIC_LABEL = 2049
 
-    def __init__(self):
-        pass
+    def __init__(self, images, labels):
+        self.images = images
+        self.labels = labels
+        self.entries = [Entry(images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
+            labels[i]) for i in range(len(labels))]
+
+        """
+        Populate CL information
+        """
+        self.cl_dev = clu.Q.device
+        self.cl_height = int(self.cl_dev.get_info(cl.device_info \
+            .IMAGE3D_MAX_HEIGHT) / IMG_ROWS) * IMG_ROWS
+        self.cl_width = int(self.cl_dev.get_info(cl.device_info \
+            .IMAGE3D_MAX_WIDTH) / IMG_COLS) * IMG_COLS
+        self.cl_dimension = (self.cl_height, self.cl_width)
+        self.cl_size = len(self.images)
+        self.cl_per_row = int(self.cl_width / IMG_COLS)
+        self.cl_per_depth = int((self.cl_width * self.cl_height) \
+            / IMG_SIZE)
+
+        """
+        Build CL program
+        """
+        # Macros
+        kernel_cl = """
+#define PER_ROW {per_row:d}
+#define PER_DEPTH {per_depth:d}
+#define SIZE {size:d}
+#define ROWS {rows:d}
+#define COLS {cols:d}
+#define HR {hr:f}
+#define HC {hc:f}
+        """.format(per_row=self.cl_per_row, per_depth=self.cl_per_depth, \
+            size=IMG_SIZE, rows=IMG_ROWS, cols=IMG_COLS,\
+            hr=IMG_ROWS / 2.0, hc=IMG_COLS / 2.0)
+
+        # Rest header
+        kernel_cl += """
+#define CY(ry) -ry + HR
+#define CX(rx) rx - HC
+#define RY(cy) HR - cy
+#define RX(cx) cx + HC
+// ABS is for absolute coords in the image
+// 1 is for destination 0 is for source
+#define GL_ID (int4)(get_global_id(1), get_global_id(0), \
+    get_global_id(2), 0)
+#define IDX(abs) abs.z * PER_DEPTH + int(abs.y / ROWS) * PER_ROW + \
+    int(abs.x / COLS)
+
+__constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+    CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
+__kernel void ArrayToImage(
+    __global float *ary,
+    __write_only image3d_t dest,
+    const int length) {
+
+    int4 ary_pos = GL_ID;
+    int ary_idx = ary_pos.z * PER_DEPTH * SIZE + ary_pos.y * COLS \
+        * PER_ROW + ary_pos.x;
+    int idx = ary_idx / SIZE;
+
+    // return if padded
+    if(idx >= length) {
+        return;
+    }
+
+    // Array index in current depth
+    int ary_idx_in_depth = ary_idx % (PER_DEPTH * SIZE);
+    // Array index in each image
+    int ary_idx_in_each = ary_idx_in_depth % SIZE;
+
+    int idx_in_depth = idx % PER_DEPTH;
+    int base_y = (idx_in_depth / PER_ROW) * ROWS;
+    int base_x = (idx_in_depth % PER_ROW) * COLS;
+
+    int img_y = base_y + ary_idx_in_each / COLS;
+    int img_x = base_x + ary_idx_in_each % COLS;
+
+    int4 img_pos = (int4)(img_x, img_y, ary_pos.z, 0);
+    float4 cl = (float4)(ary[ary_idx], 0.0f, 0.0f, 1.0f);
+    write_imagef(dest, img_pos, cl);
+
+}
+
+__kernel void ImageToArray(
+    __read_only image2d_array_t img,
+    __global float *ary,
+    const int length) {
+
+    int4 img_pos = GL_ID;
+    int idx = img_pos.z * PER_DEPTH + int(img_pos.y / ROWS) * PER_ROW \
+        + int(img_pos.x / COLS);
+
+    if(idx >= length) return;
+
+    int idx_in_depth = idx % PER_DEPTH;
+    int ary_idx = img_pos.z * PER_DEPTH * SIZE + idx_in_depth * SIZE + \
+        (img_pos.y % ROWS) * COLS + (img_pos.x % COLS);
+    float4 cl = read_imagef(img, sampler, img_pos);
+    ary[ary_idx] = cl.x;
+
+}
+        """
+
+        # Kernels
+        kernel_cl += "\n".join([ \
+            self.invert_cl, self.rotate_cl])
+
+        self.program = cl.Program(clu.CTX, kernel_cl).build()
 
     def __len__(self):
         return len(self.entries)
@@ -62,18 +170,15 @@ class Database:
         # Check rows and cols
         assert be2i(fm.read(8)) == (IMG_ROWS << 32) | IMG_COLS
 
-        self = cls()
-        self.images = [px2f(px) for px in fm.read(IMG_SIZE * n)]
-        self.images = np.asarray(self.images, dtype=np.float32)
-        self.labels = [l for l in fl.read(n)]
-        self.labels = np.asarray(self.labels, dtype=np.int32)
-        self.entries = [Entry(self.images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
-            self.labels[i]) for i in range(n)]
+        images = [px2f(px) for px in fm.read(IMG_SIZE * n)]
+        images = np.asarray(images, dtype=np.float32)
+        labels = [l for l in fl.read(n)]
+        labels = np.asarray(labels, dtype=np.int32)
 
         fm.close()
         fl.close()
 
-        return self
+        return cls(images, labels)
 
     def save(self, image_path, label_path):
         return # Disabled atm
@@ -98,93 +203,171 @@ class Database:
         fm.close()
         fl.close()
 
-    program = cl.Program(clu.CTX, """
-    #define SIZE {size:d}
-    #define ROWS {rows:d}
-    #define COLS {cols:d}
-    #define HR {hr:f}
-    #define HC {hc:f}
-    """.format(size=IMG_SIZE, rows=IMG_ROWS, cols=IMG_COLS, \
-        hr=IMG_ROWS / 2.0, hc=IMG_COLS / 2.0) + """
-    #define CY(ry) -ry + HR
-    #define CX(rx) rx - HC
-    #define RY(cy) HR - cy
-    #define RX(cx) cx + HC
 
-    __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
-        CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+    invert_cl = """
+__kernel void Invert(
+    __read_only image2d_array_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global uint *bools) {
 
-    __kernel void Rotate(
-        __read_only image2d_array_t src,
-        __global float *rads,
-        __write_only image2d_array_t dest) {
+    int4 abs1 = GL_ID;
+    int idx1 = IDX(abs1);
 
-        int z = get_global_id(2);
-        int4 xyz1 = (int4)(get_global_id(1), get_global_id(0), z, 0);
+    // if padded return
+    if(idx1 >= length) return;
 
-        // Cartesian and rotation
-        float cy1 = CY(xyz1.y);
-        float cx1 = CX(xyz1.x);
-        float c = cos(rads[z]);
-        float s = sin(rads[z]);
-        float cy0 = cx1 * s + cy1 * c;
-        int ry0 = RY(cy0);
-        if(ry0 < 0 || ry0 >= ROWS) return;
-        float cx0 = cx1 * c - cy1 * s;
-        int rx0 = RX(cx0);
-        if(rx0 < 0 || rx0 >= COLS) return;
-
-        int4 xyz0 = (int4)(rx0, ry0, z, 0);
-
-        float4 cl0 = read_imagef(src, sampler, xyz0);
-        write_imagef(dest, xyz1, cl0);
-
+    float4 cl0 = read_imagef(src, sampler, abs1);
+    if(bools[idx1] > 0) {
+        cl0.x = 1.0 - cl0.x;
     }
+    write_imagef(dest, abs1, cl0);
 
-    """).build()
+}
+    """
 
-    @staticmethod
-    def npary_to_src_dest(ary):
+    def invert(self, bools):
+        bools = bools.astype(np.uint32)
+        self.__run_program(self.program.Invert, clu.in_buffer(bools))
+
+    rotate_cl = """
+__kernel void Rotate(
+    __read_only image2d_array_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global float *rads) {
+
+    int4 abs1 = GL_ID;
+    int idx1 = IDX(abs1);
+
+    // if padded return
+    if(idx1 >= length) return;
+
+    // Cartesian
+    int ry1 = abs1.y % ROWS;
+    int rx1 = abs1.x % COLS;
+    float cy1 = CY(ry1);
+    float cx1 = CX(rx1);
+
+    // Rotate
+    float c = cos(rads[idx1]);
+    float s = sin(rads[idx1]);
+    float cy0 = cx1 * s + cy1 * c;
+    int ry0 = RY(cy0);
+    if(ry0 < 0 || ry0 >= ROWS) return;
+
+    float cx0 = cx1 * c - cy1 * s;
+    int rx0 = RX(cx0);
+    if(rx0 < 0 || rx0 >= COLS) return;
+
+    // Source coords
+    int4 abs0 = (int4)(
+        rx0 - rx1 + abs1.x,
+        ry0 - ry1 + abs1.y,
+        abs1.z,
+        0
+    );
+
+    float4 cl0 = read_imagef(src, sampler, abs0);
+    write_imagef(dest, abs1, cl0);
+
+}
+    """
+
+    def rotate(self, rads):
+        rads = clu.in_buffer(rads.astype(np.float32))
+        self.__run_program(self.program.Rotate, rads)
+
+    """
+    OpenCL run program
+    """
+    def __run_program(self, fun, *args):
+        st = self.images_to_cl()
+
+        fun(clu.Q, st.region, None, st.src, st.dest, st.length, *args)
+        cl.enqueue_copy(clu.Q, st.buffer, st.dest, origin=(0,0,0), \
+            region=st.region)
+
+        img = cl.Image(clu.CTX, clu.MF.READ_WRITE, st.fmt, \
+            shape=st.region, is_array=False)
+        cl.enqueue_copy(clu.Q, img, st.buffer, origin=(0,0,0), \
+            region=st.region)
+
+        plus_pad_size = (st.length + st.pad_length) * IMG_SIZE;
+        out = np.zeros(plus_pad_size).astype(np.float32)
+        ary = cl.Buffer(clu.CTX, clu.MF.READ_WRITE, out.nbytes)
+        self.program.ImageToArray(clu.Q, st.region, None, \
+            img, ary, st.length)
+        cl.enqueue_copy(clu.Q, out, ary)
+
+        np.copyto(self.images, out[:len(self.images)])
+
+    """
+    OpenCL image set
+    """
+    class CLImageSet:
+        def __init__(self, src, dest, region, fmt, length, pad_length, \
+            padded):
+            self.src = src
+            self.dest = dest
+            self.region = region
+            self.fmt = fmt
+            self.length = length
+            self.pad_length = pad_length
+            self.buffer = padded
+
+        def copyto(self, ary):
+            cl.enqueue_copy
+
+    def images_to_cl(self):
+        """
+        Set dimensions and depth
+        """
+        dev = clu.Q.device
+        max_r = dev.get_info(cl.device_info.IMAGE3D_MAX_HEIGHT)
+        max_c = dev.get_info(cl.device_info.IMAGE3D_MAX_WIDTH)
+        rows = int(max_r / IMG_ROWS) * IMG_ROWS
+        cols = int(max_c / IMG_COLS) * IMG_COLS
+        dim = (rows, cols)
+        size = len(self.images)
+        depth = math.ceil(size / (rows * cols))
+
+        """
+        Pad empty pixels
+        """
+        pad_size = depth * (rows * cols) - size
+        padded = np.append(self.images, np.zeros(pad_size)) \
+            .astype(np.float32)
+
         """
         Channel Order R and Channel Type Float gives one channeled float
         type of image
         """
-        length = int(len(ary) / IMG_SIZE)
         fmt = cl.ImageFormat(cl.channel_order.R, cl.channel_type.FLOAT)
-        # Z-axis(length) is placed as the last element
-        region = (*IMG_SQUARE, length) # i.e. shape
+        region = (*dim, depth)
 
         # Create as image2d_array_t
         # src here will not have shape because it is not image3d_t
         # only images have shapes, says opencl
-        src = cl.Image(clu.CTX, clu.MF.READ_ONLY | clu.MF.COPY_HOST_PTR, \
-            fmt, shape=region, hostbuf=ary, is_array=True)
+        length = np.int32(len(self.entries))
+        ary = cl.Buffer(clu.CTX, clu.MF.READ_ONLY | clu.MF.COPY_HOST_PTR, \
+            hostbuf=padded)
+        img = cl.Image(clu.CTX, clu.MF.READ_WRITE, fmt, shape=region,
+            is_array=False)
+        self.program.ArrayToImage(clu.Q, region, None, ary, img, length)
+
+        src = cl.Image(clu.CTX, clu.MF.READ_WRITE, \
+            fmt, shape=region, is_array=False)
+        cl.enqueue_copy(clu.Q, src, img, src_origin=(0,0,0), \
+            dest_origin=(0,0,0), region=region)
+
         # dest is same-sized empty buffer for new image
-        dest = cl.Image(clu.CTX, clu.MF.WRITE_ONLY, fmt, shape=region)
+        dest = cl.Image(clu.CTX, clu.MF.WRITE_ONLY, fmt, shape=region, \
+            is_array=False)
 
-        return src, dest
+        return self.CLImageSet(src, dest, region, fmt, length, \
+            int(pad_size / IMG_SIZE), padded)
 
-    def test_rotate_all(self, rads):
-        src, dest = self.npary_to_src_dest(self.images)
-        shape = dest.shape
-        self.program.Rotate(clu.Q, shape, None, src, clu.copy_in(rads), \
-            dest)
-        cl.enqueue_copy(clu.Q, self.images, dest, origin=(0,0,0), \
-            region=shape)
-
-        return
-
-        fmt = cl.ImageFormat(cl.channel_order.R, \
-            cl.channel_type.FLOAT)
-        src = self.images
-        shp = (*IMG_SQUARE, len(self))
-        img = cl.Image(clu.CTX, clu.MF.READ_ONLY | clu.MF.COPY_HOST_PTR, \
-            fmt, shape=shp, hostbuf=src, is_array=True)
-        dest = cl.Image(clu.CTX, clu.MF.WRITE_ONLY, fmt, shape=shp)
-        self.program.Rotate(clu.Q, shp, None, img, \
-            clu.copy_in(rads), dest)
-        cl.enqueue_copy(clu.Q, self.images, dest, origin=(0,0,0), \
-            region=shp, is_blocking=True)
 
 """
 Entry related
