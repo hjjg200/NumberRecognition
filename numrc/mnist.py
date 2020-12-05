@@ -76,7 +76,7 @@ class Database:
 #define HC {hc:f}
         """.format(per_row=self.cl_per_row, per_depth=self.cl_per_depth, \
             size=IMG_SIZE, rows=IMG_ROWS, cols=IMG_COLS,\
-            hr=IMG_ROWS / 2.0, hc=IMG_COLS / 2.0)
+            hr=(IMG_ROWS - 1) / 2.0, hc=(IMG_COLS - 1) / 2.0)
 
         # Rest header
         kernel_cl += """
@@ -98,8 +98,8 @@ class Database:
     + (abs.y % ROWS) * COLS \
     + abs.x % COLS
 #define CARTESIAN(abs) (float4)( \
-    (abs1.x % COLS) - HC, \
-    -(abs1.y % ROWS) + HR, \
+    (abs.x % COLS) - HC, \
+    -(abs.y % ROWS) + HR, \
     abs.z, \
     0.0f)
 #define RASTER(cart) (float4)( \
@@ -112,6 +112,7 @@ class Database:
     abs.y, \
     abs.z + 0.5f, /* +0.5f makes z not interpolated */ \
     0.0f)
+#define SIGN_INT(i) ((i > 0) - (i < 0))
 
 __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
     CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
@@ -186,7 +187,8 @@ __kernel void ImageToArray(
 
         # Kernels
         kernel_cl += "\n".join([ \
-            self.invert_cl, self.rotate_cl, self.noise_cl, self.scale_cl])
+            self.invert_cl, self.rotate_cl, self.noise_cl, self.scale_cl, \
+            self.corner_cl])
 
         self.program = cl.Program(clu.CTX, kernel_cl).build()
 
@@ -371,8 +373,6 @@ __kernel void Scale(
 
     float4 cart0 = cart1 * vec;
     float4 rast0 = RASTER(cart0);
-    float4 abs0 = convert_float4(abs1) + (rast0 - rast1);
-    abs0 = NO_Z_INTERPOLATION(abs0);
 
     // Determine the color
     float4 cl0 = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
@@ -381,6 +381,8 @@ __kernel void Scale(
     if(rast0.x >= 0.0f && rast0.x < COLS &&
        rast0.y >= 0.0f && rast0.y < ROWS)
     {
+        float4 abs0 = convert_float4(abs1) + (rast0 - rast1);
+        abs0 = NO_Z_INTERPOLATION(abs0);
         cl0 = read_imagef(src, linear_sampler, abs0);
     }
 
@@ -393,10 +395,150 @@ __kernel void Scale(
         y_factors = clu.in_buffer(y_factors.astype(np.float32))
         self.__run_program(self.program.Scale, x_factors, y_factors)
 
+    corner_cl = """
+__kernel void Corner1(
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global int *x_dirs,
+    __global int *y_dirs,
+    const float threshold)
+{
+
+    int4 abs1 = GL_ID_102;
+    int idx1 = IDX(abs1);
+
+    if(idx1 >= length) return;
+
+    if(abs1.x % COLS == 0 && abs1.y % ROWS == 0)
+    {
+        x_dirs[idx1] = SIGN_INT(x_dirs[idx1]) * COLS;
+        y_dirs[idx1] = SIGN_INT(y_dirs[idx1]) * ROWS;
+    }
+
+}
+
+__kernel void Corner2(
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global int *x_dirs,
+    __global int *y_dirs,
+    const float threshold)
+{
+
+    int4 abs1 = GL_ID_102;
+    int idx1 = IDX(abs1);
+
+    if(idx1 >= length) return;
+
+    float4 cart1 = CARTESIAN(abs1);
+
+    int x_sign = SIGN_INT(x_dirs[idx1]);
+    int y_sign = SIGN_INT(y_dirs[idx1]);
+
+    // Find source pixel and its color
+    float4 cl0 = read_imagef(src, sampler, abs1);
+    if(cl0.x > threshold)
+    {
+        if(x_sign > 0)
+        {
+            int val = int(HC - cart1.x) + 1;
+            atomic_min(&x_dirs[idx1], val);
+        }
+        else if(x_sign < 0)
+        {
+            int val = -int(cart1.x + HC) - 1;
+            atomic_max(&x_dirs[idx1], val);
+        }
+
+        if(y_sign > 0)
+        {
+            int val = int(HR - cart1.y) + 1;
+            atomic_min(&y_dirs[idx1], val);
+        }
+        else if(y_sign < 0)
+        {
+            int val = -int(cart1.y + HR) - 1;
+            atomic_max(&y_dirs[idx1], val);
+        }
+    }
+
+}
+
+__kernel void Corner3(
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global int *x_dirs,
+    __global int *y_dirs,
+    const float threshold)
+{
+
+    int4 abs1 = GL_ID_102;
+    int idx1 = IDX(abs1);
+
+    if(idx1 >= length) return;
+
+    //
+    int x_sign = SIGN_INT(x_dirs[idx1]);
+    int y_sign = SIGN_INT(y_dirs[idx1]);
+
+    int dx = x_dirs[idx1] - x_sign;
+    int dy = y_dirs[idx1] - y_sign;
+
+    // Coords
+    float4 cart0 = CARTESIAN(abs1);
+    float4 rast1 = RASTER(cart0);
+
+    // Update source coords
+    cart0.x -= float(dx);
+    cart0.y -= float(dy);
+    float4 rast0 = RASTER(cart0);
+
+    float4 cl0 = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
+    if(rast0.x >= 0.0f && rast0.x < COLS &&
+       rast0.y >= 0.0f && rast0.y < ROWS)
+    {
+        float4 abs0 = convert_float4(abs1) + (rast0 - rast1);
+        cl0 = read_imagef(src, sampler, abs0);
+    }
+
+    write_imagef(dest, abs1, cl0);
+
+}
+    """
+    def corner(self, x_dirs, y_dirs, threshold):
+
+        x_dirs = clu.in_buffer(x_dirs.astype(np.int32), 'rw')
+        y_dirs = clu.in_buffer(y_dirs.astype(np.int32), 'rw')
+        threshold = np.float32(threshold)
+
+        pr = self.program
+        args = [x_dirs, y_dirs, threshold]
+        self.__run_program( \
+            [pr.Corner1, pr.Corner2, pr.Corner3], \
+            [args, args, args])
+
     """
     OpenCL run program
     """
-    def __run_program(self, fun, *args):
+    def __run_program(self, func, *args):
+        """
+        Wrapper for single function use
+        If func is a list of functions, it will be treated as a list
+        of sub functions constituting a whole function
+        """
+        self.__run_programs([func], [args])
+
+    def __run_programs(self, funclist, argslist):
+
+        """
+        If funclist is list of list of functions, sublist's functions
+        are run sequentially without the order of source and destination
+        being changed
+        """
+        assert len(funclist) == len(argslist)
 
         # Length is count of complete images
         length = np.int32(len(self.entries))
@@ -434,12 +576,22 @@ __kernel void Scale(
             img_A, img_B, length)
 
         """
-        Run the function
+        Run the functions
         """
-        fun(clu.Q, region, None, img_B, img_A, length, *args)
+        src, dest = img_A, img_B
+        for func, args in zip(funclist, argslist):
+            src, dest = dest, src
+            if isinstance(func, list):
+                for subfunc, subargs in zip(func, *args):
+                    subfunc(clu.Q, region, None, src, dest, length, \
+                        *subargs)
+            else:
+                print(len(args))
+                func(clu.Q, region, None, src, dest, length, *args)
+
         self.program.ImageToArray(clu.Q, region, None, \
-            img_A, img_B, length)
-        cl.enqueue_copy(clu.Q, padded, img_B, origin=(0,0,0), \
+            dest, src, length)
+        cl.enqueue_copy(clu.Q, padded, src, origin=(0,0,0), \
             region=region)
 
         np.copyto(self.images, padded[:len(self.images)])

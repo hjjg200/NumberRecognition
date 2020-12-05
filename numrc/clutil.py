@@ -7,6 +7,12 @@ MF = cl.mem_flags
 CTX = cl.Context([dev])
 Q = cl.CommandQueue(CTX, dev)
 
-def in_buffer(a):
-    return cl.Buffer(CTX, MF.READ_ONLY | MF.COPY_HOST_PTR, hostbuf=a)
+def in_buffer(a, mode='r'):
+    flag = MF.COPY_HOST_PTR
+    if mode == 'r':
+        flag |= MF.READ_ONLY
+    elif mode == 'rw':
+        flag |= MF.READ_WRITE
+
+    return cl.Buffer(CTX, flag, hostbuf=a)
 
