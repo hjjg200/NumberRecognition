@@ -80,16 +80,38 @@ class Database:
 
         # Rest header
         kernel_cl += """
-#define CY(ry) -ry + HR
-#define CX(rx) rx - HC
-#define RY(cy) HR - cy
-#define RX(cx) cx + HC
+#define CY(ry) -(ry) + HR
+#define CX(rx) (rx) - HC
+#define RY(cy) HR - (cy)
+#define RX(cx) (cx) + HC
 // ABS is for absolute coords in the image
 // 1 is for destination 0 is for source
-#define GL_ID_102 (int4)(get_global_id(1), get_global_id(0), \
-    get_global_id(2), 0)
-#define IDX(abs) abs.z * PER_DEPTH + int(abs.y / ROWS) * PER_ROW + \
-    int(abs.x / COLS)
+#define GL_ID_102 (int4)( \
+    get_global_id(1), \
+    get_global_id(0), \
+    get_global_id(2), \
+    0)
+#define IDX(abs) abs.z * PER_DEPTH \
+    + int(abs.y / ROWS) * PER_ROW \
+    + int(abs.x / COLS)
+#define ARY_IDX(idx, abs) idx * SIZE \
+    + (abs.y % ROWS) * COLS \
+    + abs.x % COLS
+#define CARTESIAN(abs) (float4)( \
+    (abs1.x % COLS) - HC, \
+    -(abs1.y % ROWS) + HR, \
+    abs.z, \
+    0.0f)
+#define RASTER(cart) (float4)( \
+    cart.x + HC, \
+    HR - cart.y, \
+    cart.z, \
+    0.0f)
+#define NO_Z_INTERPOLATION(abs) (float4)( \
+    abs.x, \
+    abs.y, \
+    abs.z + 0.5f, /* +0.5f makes z not interpolated */ \
+    0.0f)
 
 __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
     CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
@@ -97,8 +119,8 @@ __constant sampler_t linear_sampler = CLK_NORMALIZED_COORDS_FALSE |
     CLK_ADDRESS_NONE | CLK_FILTER_LINEAR;
 
 __kernel void ArrayToImage(
-    __read_only image2d_array_t ary,
-    __write_only image2d_array_t img,
+    __read_only image3d_t ary,
+    __write_only image3d_t img,
     const int length
 )
 {
@@ -133,8 +155,8 @@ __kernel void ArrayToImage(
 }
 
 __kernel void ImageToArray(
-    __read_only image2d_array_t img,
-    __write_only image2d_array_t ary,
+    __read_only image3d_t img,
+    __write_only image3d_t ary,
     const int length
 )
 {
@@ -164,7 +186,7 @@ __kernel void ImageToArray(
 
         # Kernels
         kernel_cl += "\n".join([ \
-            self.invert_cl, self.rotate_cl])
+            self.invert_cl, self.rotate_cl, self.noise_cl, self.scale_cl])
 
         self.program = cl.Program(clu.CTX, kernel_cl).build()
 
@@ -224,8 +246,8 @@ __kernel void ImageToArray(
 
     invert_cl = """
 __kernel void Invert(
-    __read_only image2d_array_t src,
-    __write_only image2d_array_t dest,
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
     const int length,
     __global uint *bools
 )
@@ -247,13 +269,13 @@ __kernel void Invert(
     """
 
     def invert(self, bools):
-        bools = bools.astype(np.uint32)
-        self.__run_program(self.program.Invert, clu.in_buffer(bools))
+        bools = clu.in_buffer(bools.astype(np.uint32))
+        self.__run_program(self.program.Invert, bools)
 
     rotate_cl = """
 __kernel void Rotate(
-    __read_only image2d_array_t src,
-    __write_only image2d_array_t dest,
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
     const int length,
     __global float *rads
 )
@@ -265,36 +287,26 @@ __kernel void Rotate(
     // if padded return
     if(idx1 >= length) return;
 
-    // Raster -> cartesian
-    int ry1 = abs1.y % ROWS;
-    int rx1 = abs1.x % COLS;
-    float cy1 = CY(ry1);
-    float cx1 = CX(rx1);
+    // Cartesian
+    float4 cart1 = CARTESIAN(abs1);
+    float4 rast1 = RASTER(cart1);
 
     // Rotate
+    float4 cart0 = cart1;
     float c = cos(rads[idx1]);
     float s = sin(rads[idx1]);
-
-    // Cartesian -> float raster
-    float cy0 = cx1 * s + cy1 * c;
-    float fry0 = RY(cy0);
-
-    float cx0 = cx1 * c - cy1 * s;
-    float frx0 = RX(cx0);
+    cart0.y = cart1.x * s + cart1.y * c;
+    cart0.x = cart1.x * c - cart1.y * s;
+    float4 rast0 = RASTER(cart0);
 
     // Get source color
     float4 cl0 = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
 
-    if(fry0 >= 0.0f && fry0 < ROWS &&
-       frx0 >= 0.0f && frx0 < COLS)
+    if(rast0.x >= 0.0f && rast0.x < COLS &&
+       rast0.y >= 0.0f && rast0.y < ROWS)
     {
-        float4 abs0 = (float4)(
-            frx0 - float(rx1 - abs1.x),
-            fry0 - float(ry1 - abs1.y),
-            // + 0.5f makes z axis not interpolated
-            float(abs1.z) + 0.5f,
-            0
-        );
+        float4 abs0 = convert_float4(abs1) + (rast0 - rast1);
+        abs0 = NO_Z_INTERPOLATION(abs0);
         cl0 = read_imagef(src, linear_sampler, abs0);
     }
 
@@ -302,10 +314,84 @@ __kernel void Rotate(
 
 }
     """
-
     def rotate(self, rads):
         rads = clu.in_buffer(rads.astype(np.float32))
         self.__run_program(self.program.Rotate, rads)
+
+    noise_cl = """
+__kernel void Noise(
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global float *delta)
+{
+
+    int4 abs1 = GL_ID_102;
+    int idx1 = IDX(abs1);
+
+    if(idx1 >= length) return;
+
+    int ary_idx1 = ARY_IDX(idx1, abs1);
+
+    float4 cl0 = read_imagef(src, sampler, abs1);
+    cl0.x = max(min(cl0.x + delta[ary_idx1], 1.0f), 0.0f);
+    write_imagef(dest, abs1, cl0);
+
+}
+    """
+    def noise(self, factor):
+        delta = clu.in_buffer(((np.random.random_sample( \
+            len(self.images)) * 2.0 - 1.0) * factor).astype(np.float32))
+        self.__run_program(self.program.Noise, delta)
+
+    scale_cl = """
+__kernel void Scale(
+    __read_only image3d_t src,
+    __write_only image3d_t dest,
+    const int length,
+    __global float *x_factors,
+    __global float *y_factors)
+{
+
+    int4 abs1 = GL_ID_102;
+    int idx1 = IDX(abs1);
+
+    if(idx1 >= length) return;
+
+    // Cartesian
+    float4 cart1 = CARTESIAN(abs1);
+    float4 rast1 = RASTER(cart1);
+
+    // Hadamard product
+    float4 vec = (float4)(
+        1.0f / x_factors[idx1],
+        1.0f / y_factors[idx1],
+        1.0f,
+        1.0f);
+
+    float4 cart0 = cart1 * vec;
+    float4 rast0 = RASTER(cart0);
+    float4 abs0 = convert_float4(abs1) + (rast0 - rast1);
+    abs0 = NO_Z_INTERPOLATION(abs0);
+
+    // Determine the color
+    float4 cl0 = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // Find out if it is out of the bounds
+    if(rast0.x >= 0.0f && rast0.x < COLS &&
+       rast0.y >= 0.0f && rast0.y < ROWS)
+    {
+        cl0 = read_imagef(src, linear_sampler, abs0);
+    }
+
+    write_imagef(dest, abs1, cl0);
+
+}
+    """
+    def scale(self, x_factors, y_factors):
+        x_factors = clu.in_buffer(x_factors.astype(np.float32))
+        y_factors = clu.in_buffer(y_factors.astype(np.float32))
+        self.__run_program(self.program.Scale, x_factors, y_factors)
 
     """
     OpenCL run program
@@ -399,12 +485,12 @@ class Entry:
     @staticmethod
     def ry(cy):
         return int(IMG_ROWS / 2.0 - cy)
-
+"""
     def corner(self, x_dir, y_dir, threshold=0.0):
-        """
+        " ""
         x_dir = 0 and y_dir > 0 will push all the pixels to rightmost
         position without losing any pixel whose value exceeds the threshold
-        """
+        " ""
         source = self.image.reshape(IMG_SQUARE)
         projection = np.zeros(IMG_SQUARE)
         y_dir, x_dir = np.sign(y_dir), np.sign(x_dir)
@@ -428,70 +514,6 @@ class Entry:
             projection[ry1][rx1] = source[ry0][rx0]
         return self.__replace(projection.reshape(IMG_SHAPE))
 
-
-    vars_dict = {'rows': IMG_ROWS, 'cols': IMG_COLS, 'hr': IMG_ROWS / 2.0,
-        'hc': IMG_COLS / 2.0}
-    programs = cl.Program(clu.CTX, """
-    #define ROWS %(rows)d
-    #define COLS %(cols)d
-    #define HR %(hr)f
-    #define HC %(hc)f
-    #define CY(ry) -ry + HR
-    #define CX(rx) rx - HC
-    #define RY(cy) HR - cy
-    #define RX(cx) cx + HC
-    #define IDX(y, x) y * COLS + x
-
-    __kernel void Squeeze(
-        __global float *a,
-        const float y_factor,
-        const float x_factor,
-        __global float *out) {
-        int ry1 = get_global_id(0);
-        int rx1 = get_global_id(1);
-        float cy1 = CY(ry1);
-        float cx1 = CX(rx1);
-        float cy0 = cy1 / y_factor;
-        float cx0 = cx1 / x_factor;
-        int ry0 = RY(cy0);
-        int rx0 = RX(cx0);
-        if(ry0 < 0 || ry0 >= ROWS || rx0 < 0 || rx0 >= COLS) return;
-        out[IDX(ry1, rx1)] = a[IDX(ry0, rx0)];
-    }
-
-    __kernel void Invert(
-        __global float *a,
-        __global float *out) {
-        int i = get_global_id(0);
-        out[i] = 1.0 - a[i];
-    }
-
-    __kernel void Noise(
-        __global float *a,
-        __global float *d,
-        __global float *out) {
-        int i = get_global_id(0);
-        out[i] = max(min(a[i] + d[i], 1.0), 0.0);
-    }
-
-    __kernel void Rotate(
-        __global float *a,
-        __global float *r,
-        __global float *out) {
-        int ry1 = get_global_id(0);
-        int rx1 = get_global_id(1);
-        float cy1 = CY(ry1);
-        float cx1 = CX(rx1);
-        float cy0 = cx1 * r[2] + cy1 * r[3];
-        int ry0 = RY(cy0);
-        if(ry0 < 0 || ry0 >= ROWS) return;
-        float cx0 = cx1 * r[0] + cy1 * r[1];
-        int rx0 = RX(cx0);
-        if(rx0 < 0 || rx0 >= COLS) return;
-        out[IDX(ry1, rx1)] = a[IDX(ry0, rx0)];
-    }
-    """ % vars_dict)
-
     def squeeze(self, x_factor, y_factor):
         out = np.empty_like(self.image)
         buf = clu.new_out(out)
@@ -500,33 +522,4 @@ class Entry:
             np.float32(x_factor), buf)
         cl.enqueue_copy(clu.Q, out, buf)
         return self.__replace(out)
-
-    def rotate(self, rad):
-        out = np.empty_like(self.image)
-        buf = clu.new_out(out)
-        c, s = math.cos(rad), math.sin(rad)
-        r = np.asarray([c, -s, s, c]).astype(np.float32)
-        self.programs.Rotate(clu.Q, IMG_SQUARE, None, \
-            clu.copy_in(self.image), clu.copy_in(r), buf)
-        cl.enqueue_copy(clu.Q, out, buf)
-        return self.__replace(out)
-
-    def noise(self, factor):
-        delta = (np.random.standard_normal(IMG_SHAPE) * factor) \
-            .astype(np.float32)
-        out = np.empty_like(self.image)
-        buf = clu.new_out(out)
-        self.programs.Noise(clu.Q, self.image.shape, None, \
-            clu.copy_in(self.image), clu.copy_in(delta), buf)
-        cl.enqueue_copy(clu.Q, out, buf)
-        return self.__replace(out)
-
-    def invert(self):
-        out = np.empty_like(self.image)
-        buf = clu.new_out(out)
-        self.programs.Invert(clu.Q, self.image.shape, None, \
-            clu.copy_in(self.image), buf)
-        cl.enqueue_copy(clu.Q, out, buf)
-        return self.__replace(out)
-
-
+"""

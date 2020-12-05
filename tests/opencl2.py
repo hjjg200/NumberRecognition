@@ -32,6 +32,10 @@ __kernel void Buffer(
     __global int *ary)
 {
     int4 id = GL_ID;
+    float4 vec = (float4)(id) + (float4)(id) / 2.0f;
+    vec = convert_float4(id) * (float4)(10.0f, 100.0f, 0.0f, 0.0f);
+    printf("%f %f %f\\n", vec.x, vec.y, vec.z);
+
     printf("%d, %d, %d, %d:\\n", id.x, id.y, id.z, \
         ary[id.z * 12 + id.y * 3 + id.x]);
 }
