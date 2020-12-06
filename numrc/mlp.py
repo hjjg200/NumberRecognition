@@ -232,14 +232,7 @@ class MLP(metaclass = abc.ABCMeta):
 
             offsprings.append(self.__class__.from_data(self.sizes, w, b))
 
-        for offspring in offsprings:
-            offspring.__mutate()
-
         return offsprings
-
-    def __mutate(self):
-        """ Mutates its weights and biases """
-        pass
 
 class SigmoidMLP(MLP):
     def f(self, z):
