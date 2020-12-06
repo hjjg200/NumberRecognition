@@ -41,6 +41,7 @@ class Database:
 
     def __init__(self, images, labels):
 
+        self.entered = False
         self.images = images
         self.labels = labels
         self.entries = [Entry(images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
@@ -54,13 +55,16 @@ class Database:
             .IMAGE3D_MAX_HEIGHT) / IMG_ROWS) * IMG_ROWS
         self.cl_width = int(self.cl_dev.get_info(cl.device_info \
             .IMAGE3D_MAX_WIDTH) / IMG_COLS) * IMG_COLS
-        self.cl_dimension = (self.cl_height, self.cl_width)
         self.cl_size = len(self.images)
         self.cl_depth = math.ceil(self.cl_size / (self.cl_height * \
             self.cl_width))
+        self.cl_region = (self.cl_height, self.cl_width, self.cl_depth)
         self.cl_per_row = int(self.cl_width / IMG_COLS)
         self.cl_per_depth = int((self.cl_width * self.cl_height) \
             / IMG_SIZE)
+        self.cl_format = cl.ImageFormat(cl.channel_order.R, \
+            cl.channel_type.FLOAT)
+        self.cl_length = np.int32(len(self.entries))
 
         """
         Build CL program
@@ -245,7 +249,6 @@ __kernel void ImageToArray(
         fm.close()
         fl.close()
 
-
     invert_cl = """
 __kernel void Invert(
     __read_only image3d_t src,
@@ -271,7 +274,10 @@ __kernel void Invert(
     """
 
     def invert(self, bools):
-        bools = clu.in_buffer(bools.astype(np.uint32))
+
+        bools = self.__to_npary(bools, np.uint32)
+        bools = clu.in_buffer(bools)
+
         self.__run_program(self.program.Invert, bools)
 
     rotate_cl = """
@@ -317,7 +323,10 @@ __kernel void Rotate(
 }
     """
     def rotate(self, rads):
-        rads = clu.in_buffer(rads.astype(np.float32))
+
+        rads = self.__to_npary(rads, np.float32)
+        rads = clu.in_buffer(rads)
+
         self.__run_program(self.program.Rotate, rads)
 
     noise_cl = """
@@ -341,9 +350,14 @@ __kernel void Noise(
 
 }
     """
-    def noise(self, factor):
-        delta = clu.in_buffer(((np.random.random_sample( \
-            len(self.images)) * 2.0 - 1.0) * factor).astype(np.float32))
+    def noise(self, factors):
+
+        factors = self.__to_npary(factors, np.float32)
+        factors = np.repeat(factors, IMG_SIZE)
+
+        delta = clu.in_buffer(((np.random.random_sample(self.cl_size) * \
+            2.0 - 1.0) * factors).astype(np.float32))
+
         self.__run_program(self.program.Noise, delta)
 
     scale_cl = """
@@ -391,8 +405,12 @@ __kernel void Scale(
 }
     """
     def scale(self, x_factors, y_factors):
-        x_factors = clu.in_buffer(x_factors.astype(np.float32))
-        y_factors = clu.in_buffer(y_factors.astype(np.float32))
+
+        x_factors = self.__to_npary(x_factors, np.float32)
+        x_factors = clu.in_buffer(x_factors)
+        y_factors = self.__to_npary(y_factors, np.float32)
+        y_factors = clu.in_buffer(y_factors)
+
         self.__run_program(self.program.Scale, x_factors, y_factors)
 
     corner_cl = """
@@ -510,91 +528,115 @@ __kernel void Corner3(
     """
     def corner(self, x_dirs, y_dirs, threshold):
 
-        x_dirs = clu.in_buffer(x_dirs.astype(np.int32), 'rw')
-        y_dirs = clu.in_buffer(y_dirs.astype(np.int32), 'rw')
+        x_dirs = self.__to_npary(x_dirs, np.int32)
+        x_dirs = clu.in_buffer(x_dirs, 'rw')
+        y_dirs = self.__to_npary(y_dirs, np.int32)
+        y_dirs = clu.in_buffer(y_dirs, 'rw')
         threshold = np.float32(threshold)
 
         pr = self.program
-        args = [x_dirs, y_dirs, threshold]
         self.__run_program( \
             [pr.Corner1, pr.Corner2, pr.Corner3], \
-            [args, args, args])
+            x_dirs, y_dirs, threshold)
+
+    """
+    NumPy helper
+    """
+    def __to_npary(self, val, dtype, length=None):
+
+        if length is None:
+            length = len(self.entries)
+
+        npary = None
+        if isinstance(val, np.ndarray):
+            npary = val.astype(dtype)
+        elif isinstance(val, (list, tuple)):
+            npary = np.array(val, dtype=dtype)
+        else:
+            return np.array([val] * length, dtype=dtype)
+
+        assert len(npary) == length
+        return npary
 
     """
     OpenCL run program
     """
-    def __run_program(self, func, *args):
-        """
-        Wrapper for single function use
-        If func is a list of functions, it will be treated as a list
-        of sub functions constituting a whole function
-        """
-        self.__run_programs([func], [args])
+    def start_filters(self):
 
-    def __run_programs(self, funclist, argslist):
-
-        """
-        If funclist is list of list of functions, sublist's functions
-        are run sequentially without the order of source and destination
-        being changed
-        """
-        assert len(funclist) == len(argslist)
-
-        # Length is count of complete images
-        length = np.int32(len(self.entries))
-
-        """
-        Set dimensions and depth
-        """
+        length = self.cl_length
+        fmt = self.cl_format
         height = self.cl_height
         width = self.cl_width
-        dim = self.cl_dimension
         size = self.cl_size
         depth = self.cl_depth
+        region = self.cl_region
 
         """
         Pad empty pixels
         """
         pad_size = depth * (height * width) - size
-        padded = np.append(self.images, np.zeros(pad_size)) \
+        self.cl_padded = np.append(self.images, np.zeros(pad_size)) \
             .astype(np.float32)
-
-        """
-        Channel Order R and Channel Type Float gives one channeled float
-        type of image
-        """
-        fmt = cl.ImageFormat(cl.channel_order.R, cl.channel_type.FLOAT)
-        region = (*dim, depth)
 
         """
         Two image3d_t are used for image processing
         """
-        img_A = cl.Image(clu.CTX, clu.MF.READ_WRITE | clu.MF.COPY_HOST_PTR,\
-            fmt, shape=region, hostbuf=padded)
-        img_B = cl.Image(clu.CTX, clu.MF.READ_WRITE, fmt, shape=region)
+        img_a = cl.Image(clu.CTX, clu.MF.READ_WRITE | clu.MF.COPY_HOST_PTR,\
+            fmt, shape=region, hostbuf=self.cl_padded)
+        img_b = cl.Image(clu.CTX, clu.MF.READ_WRITE, fmt, shape=region)
         self.program.ArrayToImage(clu.Q, region, None, \
-            img_A, img_B, length)
+            img_a, img_b, length)
+
+        self.cl_src = img_b
+        self.cl_dest = img_a
+
+    def __run_program(self, func, *args):
 
         """
-        Run the functions
+        If func is a list of functions, list's functions
+        are run sequentially without the order of source and destination
+        being changed
         """
-        src, dest = img_A, img_B
-        for func, args in zip(funclist, argslist):
-            src, dest = dest, src
-            if isinstance(func, list):
-                for subfunc, subargs in zip(func, *args):
-                    subfunc(clu.Q, region, None, src, dest, length, \
-                        *subargs)
-            else:
-                print(len(args))
-                func(clu.Q, region, None, src, dest, length, *args)
+        assert self.cl_src is not None
+        assert self.cl_dest is not None
+        assert self.cl_padded is not None
+
+        """
+        Set dimensions and depth
+        """
+        length = self.cl_length
+        region = self.cl_region
+
+        """
+        Run the function
+        """
+        if isinstance(func, list):
+            for subfunc in func:
+                subfunc(clu.Q, region, None, self.cl_src, self.cl_dest, \
+                    length, *args)
+        else:
+            func(clu.Q, region, None, self.cl_src, self.cl_dest, length, \
+                *args)
+
+        self.cl_src, self.cl_dest = self.cl_dest, self.cl_src
+
+    def flush_filters(self):
+
+        length = self.cl_length
+        region = self.cl_region
+        padded = self.cl_padded
 
         self.program.ImageToArray(clu.Q, region, None, \
-            dest, src, length)
-        cl.enqueue_copy(clu.Q, padded, src, origin=(0,0,0), \
-            region=region)
+            self.cl_src, self.cl_dest, length)
+        cl.enqueue_copy(clu.Q, padded, self.cl_dest, \
+            origin=(0,0,0), region=region)
 
         np.copyto(self.images, padded[:len(self.images)])
+
+        self.cl_padded = None
+        self.cl_src = None
+        self.cl_dest = None
+
 
 """
 Entry related

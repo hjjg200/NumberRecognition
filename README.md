@@ -15,14 +15,33 @@ Experimental project about combining neural network with genetic algorithm
 
 ## OpenCL
 
-OpenCL is planned to be used for image deformation.
+OpenCL is primarily used for image deformation in order to augment the database. OpenCL was adopted to speed up the deformation process and thus provide the MLP with new data more frequently.
 
-### Benchmarks
+```python
+>>> import numrc.experimental as exp
+>>> import numrc.mnist as mn
 
-Rotation of 60,000 images took:
+>>> db = mn.Database.load("data/train-images.idx3-ubyte", "data/train-labels.idx1-ubyte")
+>>> exp.distort_db(db)
+# about 5 seconds to compute 60,000 images
+>>> db[0].print()
+```
 
-* Python, Synchronized CPU operations: ~20 seconds
-* OpenCL, Parallel GPU operations: ~1 second
+#### Benchmarks
+
+Randomly rotating, scaling, cornering, applying noise, inverting every image in the standarad database of 60,000 images:
+
+Python
+
+* Synchronized sequential CPU operations
+* Big Sur i5-5257U CPU @ 2.70GHz
+* ~4 minutes to process images
+
+OpenCL
+
+* Parallel GPU operations
+* Big Sur Intel(R) Iris(TM) Graphics 6100
+* ~5 seconds
 
 ## Results
 

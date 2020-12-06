@@ -7,6 +7,21 @@ def load_tdb():
     return Database.load("data/t10k-images.idx3-ubyte", \
         "data/t10k-labels.idx1-ubyte")
 
+def distort_db(db):
+
+    r = lambda x, y: np.random.randint(x, y + 1, len(db))
+
+    db.start_filters()
+
+    db.rotate(np.radians(r(-17, 17)))
+    db.scale(r(18, 20) / 20.0, r(18, 20) / 20.0)
+    db.corner(r(-1, 1), r(-1, 1), 0.0)
+
+    db.noise(r(5, 15) / 100.0)
+    db.invert(r(0, 1))
+
+    db.flush_filters()
+
 def distort_entry(entry):
     r = lambda x, y: np.random.randint(x, y + 1)
 
