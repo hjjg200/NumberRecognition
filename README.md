@@ -49,6 +49,16 @@ OpenCL
 
 ## Results
 
+### `ga-92_43.tar.gz`
+
+Methods used:
+
+* Genetic algorithm with 92.23% and 91.62%
+
+Test result:
+
+* 92.43%
+
 ### `aug-92_23.tar.gz`
 
 Methods used:

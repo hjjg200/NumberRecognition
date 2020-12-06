@@ -19,9 +19,9 @@ def distort_db(db):
 
     db.start_filters()
 
-    db.rotate(np.radians(r(-17, 17)))
+    db.rotate(np.radians(r(-13, 13)))
     db.scale(r(18, 20) / 20.0, r(18, 20) / 20.0)
-    db.corner(r(-1, 1), r(-1, 1), 0.0)
+    #db.corner(r(-1, 1), r(-1, 1), 0.0)
 
     db.noise(r(5, 15) / 100.0)
     db.invert(r(0, 1))

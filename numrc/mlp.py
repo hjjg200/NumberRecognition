@@ -11,19 +11,20 @@ from .mnist import Database
 
 class MLP(metaclass = abc.ABCMeta):
 
-    def __init__(self, *hl_sizes, in_size=IMG_SIZE, out_size=10, rand=True):
-        if rand == False:
-            return
-        sizes = (in_size, *hl_sizes, out_size)
-        self.sizes = np.asarray(sizes)
-        self.weights = [np.random.randn(j, i) \
-            for i, j in zip(sizes[:-1], sizes[1:])]
-        self.biases = [np.random.randn(n, 1) \
-            for n in sizes[1:]]
+    def __init__(self, *hl_sizes, in_size=IMG_SIZE, out_size=10, \
+        rand_init=True):
+
+        if rand_init == True:
+            sizes = (in_size, *hl_sizes, out_size)
+            self.sizes = np.asarray(sizes)
+            self.weights = [np.random.randn(j, i) \
+                for i, j in zip(sizes[:-1], sizes[1:])]
+            self.biases = [np.random.randn(n, 1) \
+                for n in sizes[1:]]
 
     @classmethod
     def from_data(cls, sizes, weights, biases):
-        self = cls(rand=False)
+        self = cls(rand_init=False)
         self.sizes = sizes
         self.weights = weights
         self.biases = biases
@@ -44,8 +45,7 @@ class MLP(metaclass = abc.ABCMeta):
             for batch in batches:
                 self.__run(batch, lr)
             if tdb is not None:
-                score, failed = self.test(tdb)
-                self.__run(failed, lr)
+                score, _ = self.test(tdb)
                 print("Epoch {0} tested: {1}% of {2}".format( \
                     i, score, len(tdb)))
             else:
@@ -80,13 +80,19 @@ class MLP(metaclass = abc.ABCMeta):
             for b, g in zip(self.biases, grad_c_b)]
 
     def test(self, tdb, return_failed=False):
+
         failed = []
         for entry in tdb:
             if self.recognize(entry) != entry.label:
                 failed.append(entry)
+
+        score = round(100.0 - len(failed) / len(tdb) * 100.0, 2)
+        self.last_score = score
         if return_failed:
             failed = Database.from_entries(failed)
-        score = round(100.0 - len(failed) / len(tdb) * 100.0, 2)
+        else:
+            failed = None
+
         return score, failed
 
     @abc.abstractmethod
@@ -160,36 +166,55 @@ class MLP(metaclass = abc.ABCMeta):
             biases.append(get(cls.FNAME_BIASES.format(i)) \
                 .reshape(next_shape()))
 
-        weights = np.asarray(weights)
-        biases = np.asarray(biases)
-
         return cls.from_data(sizes, weights, biases)
 
-    def evolve(self, other, epochs, offsprings_size, test_data):
+    def evolve(self, other, epochs, offsprings_size, tdb):
+
         if offsprings_size < 2:
             raise Exception("Offsprings size must be above 1")
-        a0, a1 = (self, other)
+        assert np.array_equal(self.sizes, other.sizes)
+
+        a0, a1, a2, a3 = self, self, other, other
         for i in range(epochs):
-            offsprings = a0.reproduce(a1, offsprings_size)
-            for offspring in offsprings:
-                offspring.test(test_data)
-            offsprings.sort(key=lambda each: each.score, reverse=True)
-            a0, a1 = offsprings[:2]
+            offsprings = a0.reproduce(a2, offsprings_size)
+            offsprings += a1.reproduce(a3, offsprings_size)
+
+            offsprings.sort(key=lambda each: each.test(tdb)[0], \
+                reverse=True)
+
+            a0, a1, a2, a3 = offsprings[:4]
             print("Epoch {0} done:".format(i))
-            print("- 1st score: {0}".format(a0.score))
-            print("- 2nd score: {0}".format(a1.score))
+            print("- 1st score: {0}".format(a0.last_score))
+            print("- 2nd score: {0}".format(a1.last_score))
+            print("- 3rd score: {0}".format(a2.last_score))
+            print("- 4th score: {0}".format(a3.last_score))
+
         return (a0, a1)
 
     def reproduce(self, other, count):
-        """ Returns array of MLP of offsprings """
-        b0, b1 = (self.biases, other.biases)
-        w0, w1 = (self.weights, other.weights)
-        offsprings = [SigmoidMLP( \
-            biases=(b0 + (b1 - b0) * 2.0 * np.random.standard_normal(size=b0.shape)), \
-            weights=(w0 + (w1 - w0) * 2.0 * np.random.standard_normal(size=w0.shape))) \
+
+        """
+        Crossover
+        """
+        ri = np.random.randint
+        co_w = [[ri(0, 2, w.shape) for w in self.weights] \
             for _ in range(count)]
+        co_b = [[ri(0, 2, b.shape) for b in self.biases] \
+            for _ in range(count)]
+
+        offsprings = []
+        for i in range(count):
+            w = [np.copy(w) for w in self.weights]
+            b = [np.copy(b) for b in self.biases]
+            cw, cb = co_w[i], co_b[i]
+            for j in range(len(w)):
+                w[j][cw[j] == 1] = other.weights[j][cw[j] == 1]
+                b[j][cb[j] == 1] = other.biases[j][cb[j] == 1]
+            offsprings.append(self.__class__.from_data(self.sizes, w, b))
+
         for offspring in offsprings:
             offspring.__mutate()
+
         return offsprings
 
     def __mutate(self):
@@ -204,16 +229,19 @@ class SigmoidMLP(MLP):
     def c_prime(self, y, a):
         return a - y
 
-"""
 class ReLUMLP(MLP):
-    def f(self, z):
+    def g(self, z):
         return np.maximum(z, 0)
+    def f(self, z):
+        return 1.0 / (1.0 + np.exp(-z))
+    def f_prime(self, z):
+        return self.f(z) * (1.0 - self.f(z))
+    def c_prime(self, y, a):
+        return a - y
+    """
     def f_prime(self, z):
         r = np.copy(z)
         r[r <= 0] = 0
         r[r > 0] = 1
         return r
-    def c_prime(self, a, y):
-        pass
-"""
-
+    """
