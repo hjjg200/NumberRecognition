@@ -46,6 +46,7 @@ OpenCL
 * Big Sur Intel(R) Iris(TM) Graphics 6100
 * ~5 seconds
 
+
 ## Results
 
 ### `aug-92_23.tar.gz`
@@ -77,3 +78,22 @@ Methods used:
 Test result against MNIST test database:
 
 * ~51%
+
+## Tested Environment
+
+#### Intel Big Sur
+
+Python 3.9.0
+
+```text
+Package    Version
+---------- --------
+appdirs    1.4.4
+decorator  4.4.2
+numpy      1.19.4
+pip        20.3
+pyopencl   2020.3.1
+pytools    2020.4.3
+setuptools 49.2.1
+six        1.15.0
+```
