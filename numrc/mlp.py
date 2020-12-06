@@ -14,13 +14,15 @@ class MLP(metaclass = abc.ABCMeta):
     def __init__(self, *hl_sizes, in_size=IMG_SIZE, out_size=10, \
         rand_init=True):
 
-        if rand_init == True:
-            sizes = (in_size, *hl_sizes, out_size)
-            self.sizes = np.asarray(sizes)
-            self.weights = [np.random.randn(j, i) \
-                for i, j in zip(sizes[:-1], sizes[1:])]
-            self.biases = [np.random.randn(n, 1) \
-                for n in sizes[1:]]
+        if rand_init == False:
+            return
+
+        sizes = (in_size, *hl_sizes, out_size)
+        self.sizes = np.asarray(sizes)
+        self.weights = [np.random.randn(j, i) \
+            for i, j in zip(sizes[:-1], sizes[1:])]
+        self.biases = [np.random.randn(n, 1) \
+            for n in sizes[1:]]
 
     @classmethod
     def from_data(cls, sizes, weights, biases):
@@ -170,12 +172,12 @@ class MLP(metaclass = abc.ABCMeta):
 
     def evolve(self, other, epochs, offsprings_size, tdb):
 
-        if offsprings_size < 2:
-            raise Exception("Offsprings size must be above 1")
+        assert offsprings_size >= 2
         assert np.array_equal(self.sizes, other.sizes)
 
         a0, a1, a2, a3 = self, self, other, other
         for i in range(epochs):
+
             offsprings = a0.reproduce(a2, offsprings_size)
             offsprings += a1.reproduce(a3, offsprings_size)
 
@@ -192,16 +194,25 @@ class MLP(metaclass = abc.ABCMeta):
     def reproduce(self, other, count):
 
         """
+        Chromosome length
+        """
+        chl = np.sum([w.size for w in self.weights])
+        chl += np.sum([b.size for b in self.biases])
+        chl += chl % 2
+        half = chl / 2
+
+        """
         Attributes
         """
         ri = np.random.randint
-        attr_w = [[ri(-w.size, w.size, w.shape) for w in self.weights] \
+        attr_w = [[ri(0, chl, w.shape) for w in self.weights] \
             for _ in range(count)]
-        attr_b = [[ri(-b.size, b.size, b.shape) for b in self.biases] \
+        attr_b = [[ri(0, chl, b.shape) for b in self.biases] \
             for _ in range(count)]
 
-        # attr > 0 means it's derived from other
-        # attr == 0 means it's mutated
+        # attr >= half means it is derived from other
+        # attr > 0 && attr < half means it is from self
+        # attr == 0 means it is mutated
 
         """
         Mutator
@@ -214,21 +225,25 @@ class MLP(metaclass = abc.ABCMeta):
 
         offsprings = []
         for i in range(count):
+
             w = [np.copy(w) for w in self.weights]
             b = [np.copy(b) for b in self.biases]
             aw, ab = attr_w[i], attr_b[i]
             mw, mb = mt_w[i], mt_b[i]
+
             for j in range(len(w)):
 
                 # Crossover
-                w[j][aw[j] > 0] = other.weights[j][aw[j] > 0]
-                b[j][ab[j] > 0] = other.biases[j][ab[j] > 0]
+                cond_w = aw[j] >= half
+                cond_b = ab[j] >= half
+                w[j][cond_w] = other.weights[j][cond_w]
+                b[j][cond_b] = other.biases[j][cond_b]
 
                 # Mutation
-                mp_w = aw[j] == 0
-                mp_b = ab[j] == 0
-                w[j][mp_w] = mw[j](w[j][mp_w])
-                b[j][mp_b] = mb[j](b[j][mp_b])
+                m_cond_w = aw[j] == 0
+                m_cond_b = ab[j] == 0
+                w[j][m_cond_w] = mw[j](w[j][m_cond_w])
+                b[j][m_cond_b] = mb[j](b[j][m_cond_b])
 
             offsprings.append(self.__class__.from_data(self.sizes, w, b))
 

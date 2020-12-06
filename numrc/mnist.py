@@ -41,8 +41,8 @@ class Database:
 
     def __init__(self, images, labels):
 
-        self.images = images
-        self.labels = labels
+        self.images = np.asarray(images, dtype=np.float32).flatten()
+        self.labels = np.asarray(labels, dtype=np.int32).flatten()
         self.entries = [Entry(images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
             labels[i]) for i in range(len(labels))]
 
@@ -219,9 +219,7 @@ __kernel void ImageToArray(
         assert be2i(fm.read(8)) == (IMG_ROWS << 32) | IMG_COLS
 
         images = [px2f(px) for px in fm.read(IMG_SIZE * n)]
-        images = np.asarray(images, dtype=np.float32)
         labels = [l for l in fl.read(n)]
-        labels = np.asarray(labels, dtype=np.int32)
 
         fm.close()
         fl.close()
@@ -258,8 +256,6 @@ __kernel void ImageToArray(
         for e in entries:
             images += [*e.image]
             labels += [e.label]
-        images = np.asarray(images, dtype=np.float32)
-        labels = np.asarray(labels, dtype=np.int32)
         return cls(images, labels)
 
     invert_cl = """
@@ -539,7 +535,7 @@ __kernel void Corner3(
 
 }
     """
-    def corner(self, x_dirs, y_dirs, threshold):
+    def corner(self, x_dirs, y_dirs, threshold=0.0):
 
         x_dirs = self.__to_npary(x_dirs, np.int32)
         x_dirs = clu.in_buffer(x_dirs, 'rw')

@@ -6,8 +6,10 @@ Experimental project about combining neural network with genetic algorithm
 >>> import numrc.mnist as mn
 >>> import numrc.experimental as exp
 
+# Print image using ANSI escape codes
 >>> db = mn.Database.load("image", "label")
 >>> db[0].print()
+
 >>> m1 = mlp.SigmoidMLP(30)
 >>> m1.recognize(db[0])
 
@@ -24,10 +26,22 @@ OpenCL is primarily used for image deformation in order to augment the database.
 >>> import numrc.mnist as mn
 
 >>> db = mn.Database.load("data/train-images.idx3-ubyte", "data/train-labels.idx1-ubyte")
->>> db2 = exp.distort_db(db)
-# about 5 seconds to compute 60,000 images
 >>> db[0].print()
+
+# Randomly deform every image
+>>> db2 = exp.distort_db(db)
 >>> db2[0].print()
+
+# Uniformly deform all the 60,000 images
+>>> db3 = db.clone()
+>>> db3.start_filters()
+>>> db3.rotate(3.14 / 4) # rotate 45 degrees clockwise
+>>> db3.scale(0.8, 0.8)
+>>> db3.corner(1, 1) # corner the content to the top right(+x, +y)
+>>> db3.noise(0.2) # add random values to pixels (-0.2 to 0.2)
+>>> db3.invert(True)
+>>> db3.flush_filters()
+>>> db3[0].print()
 ```
 
 #### Benchmarks
@@ -46,6 +60,19 @@ OpenCL
 * Big Sur Intel(R) Iris(TM) Graphics 6100
 * ~5 seconds
 
+
+## Genetic Algorithm
+
+Reproduction model is defined as follows:
+
+* Chromosome is a set of every single weight and bias parameter
+* The best four are selected as the two pairs of parents for next generation
+
+As for crossover and mutation, each parameter is determined in the following manner:
+
+* 50% chance to be derived from parent B
+* Chance of 1 in entire chromosome length to be mutated. New value is randomly selected from N(mu, sigma^2) for each layer's weight and bias group
+* Rest are derived from parent A
 
 ## Results
 
@@ -125,9 +152,9 @@ Test result against MNIST test database:
 
 * ~51%
 
-## Tested Environment
+## Tested Environments
 
-#### Intel Big Sur
+### 1. Intel Big Sur
 
 Python 3.9.0
 
