@@ -184,32 +184,52 @@ class MLP(metaclass = abc.ABCMeta):
 
             a0, a1, a2, a3 = offsprings[:4]
             print("Epoch {0} done:".format(i))
-            print("- 1st score: {0}".format(a0.last_score))
-            print("- 2nd score: {0}".format(a1.last_score))
-            print("- 3rd score: {0}".format(a2.last_score))
-            print("- 4th score: {0}".format(a3.last_score))
+            print("- ", end="")
+            print([each.last_score for each in offsprings])
 
         return (a0, a1)
 
     def reproduce(self, other, count):
 
         """
-        Crossover
+        Attributes
         """
         ri = np.random.randint
-        co_w = [[ri(0, 2, w.shape) for w in self.weights] \
+        attr_w = [[ri(-w.size, w.size, w.shape) for w in self.weights] \
             for _ in range(count)]
-        co_b = [[ri(0, 2, b.shape) for b in self.biases] \
+        attr_b = [[ri(-b.size, b.size, b.shape) for b in self.biases] \
             for _ in range(count)]
+
+        # attr > 0 means it's derived from other
+        # attr == 0 means it's mutated
+
+        """
+        Mutator
+        """
+        stdn = np.random.standard_normal
+        mt_w = [[lambda a: np.mean(w) + np.std(w) * stdn(a.shape) \
+            for w in self.weights] for _ in range(count)]
+        mt_b = [[lambda a: np.mean(b) + np.std(b) * stdn(a.shape) \
+            for b in self.biases] for _ in range(count)]
 
         offsprings = []
         for i in range(count):
             w = [np.copy(w) for w in self.weights]
             b = [np.copy(b) for b in self.biases]
-            cw, cb = co_w[i], co_b[i]
+            aw, ab = attr_w[i], attr_b[i]
+            mw, mb = mt_w[i], mt_b[i]
             for j in range(len(w)):
-                w[j][cw[j] == 1] = other.weights[j][cw[j] == 1]
-                b[j][cb[j] == 1] = other.biases[j][cb[j] == 1]
+
+                # Crossover
+                w[j][aw[j] > 0] = other.weights[j][aw[j] > 0]
+                b[j][ab[j] > 0] = other.biases[j][ab[j] > 0]
+
+                # Mutation
+                mp_w = aw[j] == 0
+                mp_b = ab[j] == 0
+                w[j][mp_w] = mw[j](w[j][mp_w])
+                b[j][mp_b] = mb[j](b[j][mp_b])
+
             offsprings.append(self.__class__.from_data(self.sizes, w, b))
 
         for offspring in offsprings:

@@ -49,15 +49,51 @@ OpenCL
 
 ## Results
 
-### `ga-92_43.tar.gz`
+### `ga-92_56.tar.gz`
+
+```python
+>>> offs = m1.evolve(m2, 5, 100, tdb)
+```
+
+```markdown
+Epoch 0 done:
+- 1st score: 92.29
+- 2nd score: 92.26
+- 3rd score: 92.21
+- 4th score: 92.2
+Epoch 1 done:
+- 1st score: 92.35
+- 2nd score: 92.32
+- 3rd score: 92.31
+- 4th score: 92.31
+Epoch 2 done:
+- 1st score: 92.44
+- 2nd score: 92.43
+- 3rd score: 92.43
+- 4th score: 92.42
+Epoch 3 done:
+- 1st score: 92.44
+- 2nd score: 92.44
+- 3rd score: 92.44
+- 4th score: 92.44
+Epoch 4 done:
+- 1st score: 92.56
+- 2nd score: 92.49
+- 3rd score: 92.49
+- 4th score: 92.49
+```
 
 Methods used:
 
-* Genetic algorithm with 92.23% and 91.62%
+* Genetic algorithm with 92.23% and 91.62% that learned from augmented database
+
+Insights learned:
+
+* Offsprings showed better results than could their parents ever do with augmented database
 
 Test result:
 
-* 92.43%
+* 92.56%
 
 ### `aug-92_23.tar.gz`
 
