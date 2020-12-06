@@ -17,6 +17,23 @@ Experimental project about combining neural network with genetic algorithm
 >>> m1.recognize(db[0])
 ```
 
+## Genetic Algorithm
+
+Reproduction model is defined as follows:
+
+* Chromosome is a set of every single weight and bias parameter
+* The best four are selected as the two pairs of parents for next generation
+
+As for crossover and mutation, each parameter is determined in the following manner:
+
+* 50% chance to be derived from parent B
+* Chance of 1 in entire chromosome length to be mutated.\* New value is randomly selected from N(mu, sigma^2) for each layer's weight and bias group.\*\*
+* Rest are derived from parent A
+
+<sub>\* Mutation is done in order to prevent being stuck at local minima.<br>
+\*\* It is an arbitrarily chosen method for mutating</sub>
+
+
 ## OpenCL
 
 OpenCL is primarily used for image deformation in order to augment the database. OpenCL was adopted to speed up the deformation process and thus provide the MLP with new data more frequently.
@@ -58,21 +75,8 @@ OpenCL
 
 * Parallel GPU operations
 * Big Sur Intel(R) Iris(TM) Graphics 6100
-* ~5 seconds
+* 5 seconds
 
-
-## Genetic Algorithm
-
-Reproduction model is defined as follows:
-
-* Chromosome is a set of every single weight and bias parameter
-* The best four are selected as the two pairs of parents for next generation
-
-As for crossover and mutation, each parameter is determined in the following manner:
-
-* 50% chance to be derived from parent B
-* Chance of 1 in entire chromosome length to be mutated. New value is randomly selected from N(mu, sigma^2) for each layer's weight and bias group
-* Rest are derived from parent A
 
 ## Results
 
