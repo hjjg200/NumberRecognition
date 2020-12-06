@@ -41,7 +41,6 @@ class Database:
 
     def __init__(self, images, labels):
 
-        self.entered = False
         self.images = images
         self.labels = labels
         self.entries = [Entry(images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
@@ -202,6 +201,9 @@ __kernel void ImageToArray(
     def __getitem__(self, key):
         return self.entries[key]
 
+    def clone(self):
+        return self.__class__(np.copy(self.images), np.copy(self.labels))
+
     @classmethod
     def load(cls, image_path, label_path):
 
@@ -248,6 +250,17 @@ __kernel void ImageToArray(
 
         fm.close()
         fl.close()
+
+    @classmethod
+    def from_entries(cls, entries):
+        images = []
+        labels = []
+        for e in entries:
+            images += [*e.image]
+            labels += [e.label]
+        images = np.asarray(images, dtype=np.float32)
+        labels = np.asarray(labels, dtype=np.int32)
+        return cls(images, labels)
 
     invert_cl = """
 __kernel void Invert(
@@ -658,62 +671,3 @@ class Entry:
                 for f in row))
         print("Label: %d" % self.label)
 
-    def __replace(self, image1):
-        return Entry(image1, self.label)
-
-    """
-    Cartesian - raster
-    """
-    @staticmethod
-    def cx(rx):
-        return rx - IMG_COLS / 2.0
-
-    @staticmethod
-    def cy(ry):
-        return -ry + IMG_ROWS / 2.0
-
-    @staticmethod
-    def rx(cx):
-        return int(cx + IMG_COLS / 2.0)
-
-    @staticmethod
-    def ry(cy):
-        return int(IMG_ROWS / 2.0 - cy)
-"""
-    def corner(self, x_dir, y_dir, threshold=0.0):
-        " ""
-        x_dir = 0 and y_dir > 0 will push all the pixels to rightmost
-        position without losing any pixel whose value exceeds the threshold
-        " ""
-        source = self.image.reshape(IMG_SQUARE)
-        projection = np.zeros(IMG_SQUARE)
-        y_dir, x_dir = np.sign(y_dir), np.sign(x_dir)
-        dy, dx = -1, -1
-        for row, col in np.ndindex(IMG_SQUARE):
-            ry0 = row if y_dir > 0 else -row - 1
-            rx0 = -row - 1 if x_dir > 0 else row
-            fy0 = source[ry0][col]
-            fx0 = source[col][rx0]
-            if dy == -1 and fy0 > threshold:
-                dy = row
-            if dx == -1 and fx0 > threshold:
-                dx = row
-        dy *= y_dir * -1 if dy >= 0 else 0
-        dx *= x_dir if dx >= 0 else 0
-
-        for ry1, rx1 in np.ndindex(IMG_SQUARE):
-            ry0, rx0 = ry1 - dy, rx1 - dx
-            if ry0 < 0 or ry0 >= IMG_ROWS or rx0 < 0 or rx0 >= IMG_COLS:
-                continue
-            projection[ry1][rx1] = source[ry0][rx0]
-        return self.__replace(projection.reshape(IMG_SHAPE))
-
-    def squeeze(self, x_factor, y_factor):
-        out = np.empty_like(self.image)
-        buf = clu.new_out(out)
-        self.programs.Squeeze(clu.Q, IMG_SQUARE, None, \
-            clu.copy_in(self.image), np.float32(y_factor), \
-            np.float32(x_factor), buf)
-        cl.enqueue_copy(clu.Q, out, buf)
-        return self.__replace(out)
-"""

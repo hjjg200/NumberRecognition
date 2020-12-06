@@ -10,7 +10,9 @@ Experimental project about combining neural network with genetic algorithm
 >>> db[0].print()
 >>> m1 = mlp.SigmoidMLP(30)
 >>> m1.recognize(db[0])
->>> exp.test_distortion(db)
+
+>>> m1.train(db, 50, 500, 6.5)
+>>> m1.recognize(db[0])
 ```
 
 ## OpenCL
@@ -22,9 +24,10 @@ OpenCL is primarily used for image deformation in order to augment the database.
 >>> import numrc.mnist as mn
 
 >>> db = mn.Database.load("data/train-images.idx3-ubyte", "data/train-labels.idx1-ubyte")
->>> exp.distort_db(db)
+>>> db2 = exp.distort_db(db)
 # about 5 seconds to compute 60,000 images
 >>> db[0].print()
+>>> db2[0].print()
 ```
 
 #### Benchmarks

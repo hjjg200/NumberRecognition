@@ -16,10 +16,10 @@ class MLP(metaclass = abc.ABCMeta):
             return
         sizes = (in_size, *hl_sizes, out_size)
         self.sizes = np.asarray(sizes)
-        self.weights = np.asarray([np.random.randn(j, i) \
-            for i, j in zip(sizes[:-1], sizes[1:])])
-        self.biases = np.asarray([np.random.randn(n, 1) \
-            for n in sizes[1:]])
+        self.weights = [np.random.randn(j, i) \
+            for i, j in zip(sizes[:-1], sizes[1:])]
+        self.biases = [np.random.randn(n, 1) \
+            for n in sizes[1:]]
 
     @classmethod
     def from_data(cls, sizes, weights, biases):
@@ -52,8 +52,8 @@ class MLP(metaclass = abc.ABCMeta):
                 print("Epoch {0} done".format(i))
 
     def __run(self, batch, lr):
-        grad_c_w = np.asarray([np.zeros(w.shape) for w in self.weights])
-        grad_c_b = np.asarray([np.zeros(b.shape) for b in self.biases])
+        grad_c_w = [np.zeros(w.shape) for w in self.weights]
+        grad_c_b = [np.zeros(b.shape) for b in self.biases]
         for entry in batch:
             a = entry.image
             y = np.zeros((self.sizes[-1], 1))
@@ -74,15 +74,18 @@ class MLP(metaclass = abc.ABCMeta):
                 d_c = np.dot(self.weights[-j + 1].transpose(), d_c) * d_v
                 grad_c_w[-j] += np.dot(d_c, as_[-j - 1].transpose())
                 grad_c_b[-j] += d_c
-        self.weights -= (lr / len(batch)) * grad_c_w
-        self.biases -= (lr / len(batch)) * grad_c_b
+        self.weights = [w - (lr / len(batch)) * g \
+            for w, g in zip(self.weights, grad_c_w)]
+        self.biases = [b - (lr / len(batch)) * g \
+            for b, g in zip(self.biases, grad_c_b)]
 
-    def test(self, tdb):
+    def test(self, tdb, return_failed=False):
         failed = []
         for entry in tdb:
             if self.recognize(entry) != entry.label:
                 failed.append(entry)
-        failed = Database(failed)
+        if return_failed:
+            failed = Database.from_entries(failed)
         score = round(100.0 - len(failed) / len(tdb) * 100.0, 2)
         return score, failed
 
