@@ -19,6 +19,16 @@ Experimental project about combining neural network with genetic algorithm
 
 ## Genetic Algorithm
 
+```python
+>>> offs = a1.evolve(a1, 20, 15, exp.distort_db(db))
+
+Epoch 0 done:
+- [95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4,
+95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4, 95.4,
+95.4, 95.4, 95.4, 95.4, 95.4, 95.2]
+...
+```
+
 Reproduction model is defined as follows:
 
 * Chromosome is a set of every single weight and bias parameter
@@ -27,7 +37,7 @@ Reproduction model is defined as follows:
 As for crossover and mutation, each parameter is determined in the following manner:
 
 * 50% chance to be derived from parent B
-* Chance of 1 in entire chromosome length to be mutated.\* New value is randomly selected from N(mu, sigma^2) for each layer's weight and bias group.\*\*
+* Chance of *1 in entire chromosome length* to be mutated.\* New value is randomly selected from N(mu, sigma^2) for each layer's weight and bias group.\*\*
 * Rest are derived from parent A
 
 <sub>\* Mutation is done in order to prevent being stuck at local minima.<br>

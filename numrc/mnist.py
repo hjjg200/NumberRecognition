@@ -43,8 +43,8 @@ class Database:
 
         self.images = np.asarray(images, dtype=np.float32).flatten()
         self.labels = np.asarray(labels, dtype=np.int32).flatten()
-        self.entries = [Entry(images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
-            labels[i]) for i in range(len(labels))]
+        self.entries = [Entry(self.images[IMG_SIZE * i:IMG_SIZE * (i+1)], \
+            self.labels[i]) for i in range(len(self.labels))]
 
         """
         Populate CL information
@@ -657,7 +657,7 @@ PAINT_COLORS = tuple("\x1b[48;5;%dm \x1b[0m" % n \
 class Entry:
 
     def __init__(self, image, label):
-        self.image = np.asarray(image, dtype=np.float32).reshape(IMG_SHAPE)
+        self.image = image.reshape(IMG_SHAPE)
         self.label = label
 
     def print(self, widen=2):

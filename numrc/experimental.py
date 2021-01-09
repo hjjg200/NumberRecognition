@@ -30,6 +30,14 @@ def distort_db(db):
 
     return db
 
+def random_pick_db(db, length):
+
+    entries = list(db.entries)
+    assert len(entries) > length
+    random.shuffle(entries)
+
+    return Database.from_entries(entries[:length])
+
 def iterate_over_db(db, f, rand=False):
     if rand:
         db = list(db)

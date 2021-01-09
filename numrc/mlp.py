@@ -8,6 +8,7 @@ from io import BytesIO
 
 from .constants import IMG_SIZE
 from .mnist import Database
+from .experimental import random_pick_db
 
 class MLP(metaclass = abc.ABCMeta):
 
@@ -170,7 +171,8 @@ class MLP(metaclass = abc.ABCMeta):
 
         return cls.from_data(sizes, weights, biases)
 
-    def evolve(self, other, epochs, offsprings_size, tdb):
+    def evolve(self, other, offsprings_size, db, epochs, batch_size, \
+        lr, tdb):
 
         assert offsprings_size >= 2
         assert np.array_equal(self.sizes, other.sizes)
@@ -180,6 +182,10 @@ class MLP(metaclass = abc.ABCMeta):
 
             offsprings = a0.reproduce(a2, offsprings_size)
             offsprings += a1.reproduce(a3, offsprings_size)
+
+            gendb = random_pick_db(db, batch_size)
+            for o in offsprings:
+                o.__run(gendb, lr)
 
             offsprings.sort(key=lambda each: each.test(tdb)[0], \
                 reverse=True)
@@ -199,7 +205,6 @@ class MLP(metaclass = abc.ABCMeta):
         chl = np.sum([w.size for w in self.weights])
         chl += np.sum([b.size for b in self.biases])
         chl += chl % 2
-        half = chl / 2
 
         """
         Attributes
@@ -210,8 +215,8 @@ class MLP(metaclass = abc.ABCMeta):
         attr_b = [[ri(0, chl, b.shape) for b in self.biases] \
             for _ in range(count)]
 
-        # attr >= half means it is derived from other
-        # attr > 0 && attr < half means it is from self
+        # attr % 2 == 1 means it is derived from other
+        # attr % 2 == 0 means it is from self
         # attr == 0 means it is mutated
 
         """
@@ -234,8 +239,8 @@ class MLP(metaclass = abc.ABCMeta):
             for j in range(len(w)):
 
                 # Crossover
-                cond_w = aw[j] >= half
-                cond_b = ab[j] >= half
+                cond_w = aw[j] % 2 == 1
+                cond_b = ab[j] % 2 == 1
                 w[j][cond_w] = other.weights[j][cond_w]
                 b[j][cond_b] = other.biases[j][cond_b]
 
