@@ -170,10 +170,10 @@ Test result against MNIST test database:
 
 ### 1. MBP
 
-macOS Big Sur
-i5-5257U CPU @ 2.70GHz
-Iris(TM) Graphics 6100
-Python 3.9.0
+* macOS Big Sur
+* i5-5257U CPU @ 2.70GHz
+* Iris(TM) Graphics 6100
+* Python 3.9.0
 
 ```text
 Package    Version
@@ -190,8 +190,8 @@ six        1.15.0
 
 ### 2. Google Colab
 
-Nvidia K80
-Python 3.6.9
+* Nvidia K80
+* Python 3.6.9
 
 ```text
 Package    Version
