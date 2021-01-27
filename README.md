@@ -168,8 +168,11 @@ Test result against MNIST test database:
 
 ## Tested Environments
 
-### 1. Intel Big Sur
+### 1. MBP
 
+macOS Big Sur
+i5-5257U CPU @ 2.70GHz
+Iris(TM) Graphics 6100
 Python 3.9.0
 
 ```text
@@ -182,5 +185,23 @@ pip        20.3
 pyopencl   2020.3.1
 pytools    2020.4.3
 setuptools 49.2.1
+six        1.15.0
+```
+
+### 2. Google Colab
+
+Nvidia K80
+Python 3.6.9
+
+```text
+Package    Version
+---------- --------
+appdirs    1.4.4         
+decorator  4.4.2        
+numpy      1.19.5           
+pip        19.3.1     
+pyopencl   2020.3.1   
+pytools    2021.1     
+setuptools 51.3.3    
 six        1.15.0
 ```
