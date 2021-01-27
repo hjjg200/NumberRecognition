@@ -95,8 +95,8 @@ class Database:
     get_global_id(2), \
     0)
 #define IDX(abs) abs.z * PER_DEPTH \
-    + int(abs.y / ROWS) * PER_ROW \
-    + int(abs.x / COLS)
+    + (int)(abs.y / ROWS) * PER_ROW \
+    + (int)(abs.x / COLS)
 #define ARY_IDX(idx, abs) idx * SIZE \
     + (abs.y % ROWS) * COLS \
     + abs.x % COLS
@@ -166,8 +166,8 @@ __kernel void ImageToArray(
 {
 
     int4 img_pos = GL_ID_102;
-    int idx = img_pos.z * PER_DEPTH + int(img_pos.y / ROWS) * PER_ROW \
-        + int(img_pos.x / COLS);
+    int idx = img_pos.z * PER_DEPTH + (int)(img_pos.y / ROWS) * PER_ROW \
+        + (int)(img_pos.x / COLS);
 
     if(idx >= length) return;
 
@@ -470,23 +470,23 @@ __kernel void Corner2(
     {
         if(x_sign > 0)
         {
-            int val = int(HC - cart1.x) + 1;
+            int val = (int)(HC - cart1.x) + 1;
             atomic_min(&x_dirs[idx1], val);
         }
         else if(x_sign < 0)
         {
-            int val = -int(cart1.x + HC) - 1;
+            int val = -(int)(cart1.x + HC) - 1;
             atomic_max(&x_dirs[idx1], val);
         }
 
         if(y_sign > 0)
         {
-            int val = int(HR - cart1.y) + 1;
+            int val = (int)(HR - cart1.y) + 1;
             atomic_min(&y_dirs[idx1], val);
         }
         else if(y_sign < 0)
         {
-            int val = -int(cart1.y + HR) - 1;
+            int val = -(int)(cart1.y + HR) - 1;
             atomic_max(&y_dirs[idx1], val);
         }
     }
@@ -519,8 +519,8 @@ __kernel void Corner3(
     float4 rast1 = RASTER(cart0);
 
     // Update source coords
-    cart0.x -= float(dx);
-    cart0.y -= float(dy);
+    cart0.x -= (float)(dx);
+    cart0.y -= (float)(dy);
     float4 rast0 = RASTER(cart0);
 
     float4 cl0 = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
